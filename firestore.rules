@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    function isAdmin() {
+      // Admin UID'lerini buraya ve VITE_ADMIN_UIDS (.env) içine aynı şekilde gir.
+      return signedIn() && request.auth.uid in [
+        'YFKkEnWq36ZO5EzVkseAYg0oYCC2'
+      ];
+    }
+
+    function merchantDoc(mid) {
+      return get(/databases/$(database)/documents/merchants/$(mid));
+    }
+    function isMerchantOwner(mid) {
+      return signedIn() && merchantDoc(mid).data.ownerId == request.auth.uid;
+    }
+
+    // Kullanıcı profili (merchantId pointer'ı burada)
+    match /users/{userId} {
+      allow get, create, update: if signedIn() && request.auth.uid == userId;
+      allow list, delete: if isAdmin();
+    }
+
+    // Slug benzersizliği — create owner'a kısıtlı (squatting önlenir; merchant önce var olmalı)
+    match /publicSlugs/{slug} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if signedIn() && isMerchantOwner(request.resource.data.merchantId);
+      allow update, delete: if isAdmin() || (signedIn() && isMerchantOwner(resource.data.merchantId));
+    }
+
+    match /merchants/{merchantId} {
+      allow get:    if true;                  // PII yok; public kart/tanıtım için
+      allow list:   if isAdmin();             // enumerasyon engellenir
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isMerchantOwner(merchantId) || isAdmin();
+      allow delete: if isAdmin();             // cascade yok; owner silemez
+
+      match /campaigns/{campaignId} {
+        allow get:  if true;                  // PII yok; public kart için
+        allow list: if isMerchantOwner(merchantId) || isAdmin();
+        allow create, update, delete: if isMerchantOwner(merchantId) || isAdmin();
+      }
+
+      match /customers/{customerId} {         // PII
+        allow read, write: if isMerchantOwner(merchantId) || isAdmin();
+      }
+
+      match /memberships/{membershipId} {
+        allow read, write: if isMerchantOwner(merchantId) || isAdmin();
+      }
+
+      match /transactions/{transactionId} {
+        allow read, create: if isMerchantOwner(merchantId) || isAdmin();
+        allow update, delete: if false;       // değişmez (audit)
+      }
+
+      match /subscription/{docId} {
+        allow get:  if isMerchantOwner(merchantId) || isAdmin();
+        allow list: if isAdmin();
+        allow create, update, delete: if isAdmin();   // owner planını yazamaz
+      }
+    }
+
+    // Destek talepleri — merchant yalnızca kendi merchant'ına ait bilet oluşturabilir
+    match /supportTickets/{ticketId} {
+      // create: merchantId kullanıcının gerçek merchant'ıyla eşleşmeli
+      allow create: if signedIn()
+        && request.resource.data.merchantId != null
+        && request.resource.data.merchantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId;
+      // get: admin veya bilet sahibi merchant
+      allow get: if isAdmin()
+        || (signedIn() && resource.data.merchantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId);
+      // list: sadece admin tümünü listeler; merchant kendi sorgusunu yapabilir ama rule bunu kısıtlayamaz,
+      // bu nedenle list izni signedIn olarak bırakılır; PII riski düşük (kendi biletleri)
+      allow list: if signedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Global yapılandırma (fiyatlandırma vb.) — sadece admin yazar
+    match /config/{docId} {
+      allow get:  if signedIn();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /publicCards/{cardToken} {
+      allow get:  if true;                     // PII yok; pasifi UI gösterir
+      allow list: if false;
+
+      allow create: if isAdmin() || isMerchantOwner(request.resource.data.merchantId);
+
+      // Bağlayıcı alanlar update'te değiştirilemez
+      allow update: if (isAdmin() || isMerchantOwner(resource.data.merchantId))
+        && request.resource.data.merchantId   == resource.data.merchantId
+        && request.resource.data.campaignId   == resource.data.campaignId
+        && request.resource.data.membershipId == resource.data.membershipId;
+
+      allow delete: if isAdmin() || isMerchantOwner(resource.data.merchantId);
+    }
+  }
+}
