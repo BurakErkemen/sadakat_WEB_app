@@ -47,6 +47,7 @@ export default function QRPage() {
     }
 
     load().catch(console.error)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [merchant?.id])
 
   const cardUrl = selected ? `${window.location.origin}/c/${selected}` : ''

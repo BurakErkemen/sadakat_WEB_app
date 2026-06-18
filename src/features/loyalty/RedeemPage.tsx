@@ -3,29 +3,52 @@ import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firesto
 import toast from 'react-hot-toast'
 import { db, redeemReward } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
-import { useMerchant } from '@/hooks/useMerchant'
+import { useMerchantSub } from '@/contexts/MerchantSubContext'
 import { normalizePhone, formatPhone } from '@/lib/phone'
 import QRScanner from '@/components/QRScanner'
+import { Link } from 'react-router-dom'
 import type { Customer, Membership, Campaign } from '@/types'
 
 interface FoundData { customer: Customer; membership: Membership; campaign: Campaign }
+interface PickerOption { membership: Membership; campaign: Campaign }
+interface PickerData { customer: Customer; options: PickerOption[] }
+
 
 export default function RedeemPage() {
   const { user } = useAuth()
-  const { merchant } = useMerchant()
+  const { merchant } = useMerchantSub()
   const [phone, setPhone] = useState('')
   const [note, setNote] = useState('')
   const [found, setFound] = useState<FoundData | null>(null)
+  const [picker, setPicker] = useState<PickerData | null>(null)
+  const [noCampaign, setNoCampaign] = useState<Customer | null>(null)
   const [searching, setSearching] = useState(false)
   const [redeeming, setRedeeming] = useState(false)
   const [done, setDone] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
-  async function fetchActiveCampaign(): Promise<Campaign | null> {
-    if (!merchant?.activeCampaignId) { toast.error('Aktif kampanya yok. Lütfen önce bir kampanya aktif edin.'); return null }
-    const campSnap = await getDoc(doc(db, 'merchants', merchant.id, 'campaigns', merchant.activeCampaignId))
-    if (!campSnap.exists()) { toast.error('Kampanya bulunamadı'); return null }
-    return { id: campSnap.id, ...campSnap.data() } as Campaign
+  async function resolveFoundData(customer: Customer, memberships: Membership[]): Promise<void> {
+    if (!merchant) return
+    // Kampanyaları çek — silinmiş olanları filtrele
+    const options: PickerOption[] = []
+    await Promise.all(memberships.map(async (m) => {
+      const cmpSnap = await getDoc(doc(db, 'merchants', merchant.id, 'campaigns', m.campaignId))
+      if (cmpSnap.exists()) options.push({ membership: m, campaign: { id: cmpSnap.id, ...cmpSnap.data() } as Campaign })
+    }))
+    if (options.length === 0) { setNoCampaign(customer); return }
+
+    // Ödül hakkı olanları filtrele
+    const redeemable = options.filter((o) => o.membership.currentStamps >= o.campaign.requiredStamps)
+    if (redeemable.length === 0) {
+      const best = options[0]
+      toast.error(`Yeterli ${best.campaign.type === 'points' ? 'puan' : 'damga'} yok. ${best.membership.currentStamps}/${best.campaign.requiredStamps}`)
+      return
+    }
+    if (redeemable.length === 1) {
+      setFound({ customer, membership: redeemable[0].membership, campaign: redeemable[0].campaign })
+    } else {
+      setPicker({ customer, options: redeemable })
+    }
   }
 
   async function handleQRScan(cardToken: string) {
@@ -45,14 +68,7 @@ export default function RedeemPage() {
       const cSnap = await getDoc(doc(db, 'merchants', merchant.id, 'customers', membership.customerId))
       const customer = { id: cSnap.id, ...cSnap.data() } as Customer
 
-      const campaign = await fetchActiveCampaign()
-      if (!campaign) return
-
-      if (membership.currentStamps < campaign.requiredStamps) {
-        toast.error(`Yeterli ${campaign.type === 'points' ? 'puan' : 'damga'} yok. ${membership.currentStamps}/${campaign.requiredStamps}`)
-        return
-      }
-      setFound({ customer, membership, campaign })
+      await resolveFoundData(customer, [membership])
     } catch (err) { console.error(err); toast.error('QR okuma başarısız') }
     finally { setSearching(false) }
   }
@@ -62,7 +78,7 @@ export default function RedeemPage() {
     if (!merchant) return
     const norm = normalizePhone(phone)
     if (norm.length !== 10) { toast.error('Geçerli bir telefon girin'); return }
-    setSearching(true); setFound(null); setDone(false)
+    setSearching(true); setFound(null); setPicker(null); setNoCampaign(null); setDone(false)
     try {
       const cSnap = await getDocs(query(
         collection(db, 'merchants', merchant.id, 'customers'),
@@ -76,18 +92,16 @@ export default function RedeemPage() {
         where('customerId', '==', customer.id), where('status', '==', 'active')
       ))
       if (mSnap.empty) { toast.error('Aktif üyelik bulunamadı'); return }
-      const membership = { id: mSnap.docs[0].id, ...mSnap.docs[0].data() } as Membership
-
-      const campaign = await fetchActiveCampaign()
-      if (!campaign) return
-
-      if (membership.currentStamps < campaign.requiredStamps) {
-        toast.error(`Yeterli ${campaign.type === 'points' ? 'puan' : 'damga'} yok. ${membership.currentStamps}/${campaign.requiredStamps}`)
-        return
-      }
-      setFound({ customer, membership, campaign })
+      const memberships = mSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Membership))
+      await resolveFoundData(customer, memberships)
     } catch (err) { console.error(err); toast.error('Arama başarısız') }
     finally { setSearching(false) }
+  }
+
+  function selectCampaign(option: PickerOption) {
+    if (!picker) return
+    setFound({ customer: picker.customer, membership: option.membership, campaign: option.campaign })
+    setPicker(null)
   }
 
   async function handleRedeem() {
@@ -111,7 +125,7 @@ export default function RedeemPage() {
     } finally { setRedeeming(false) }
   }
 
-  function reset() { setPhone(''); setNote(''); setFound(null); setDone(false) }
+  function reset() { setPhone(''); setNote(''); setFound(null); setPicker(null); setNoCampaign(null); setDone(false) }
 
   const isPoints = found?.campaign.type === 'points'
   const label = isPoints ? 'puan' : 'damga'
@@ -144,6 +158,51 @@ export default function RedeemPage() {
           <span className="text-xs text-gray-400 text-center">Müşterinin kartını tara</span>
         </button>
       </div>
+
+      {noCampaign && !found && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-900">{noCampaign.fullName}</p>
+              <p className="text-sm text-amber-700 mt-1">
+                Bu müşterinin kayıtlı kampanyası silinmiş veya bulunamadı.
+                Müşteri detayından yeni bir kampanyaya ekleyebilirsiniz.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/app/customers/${noCampaign.id}`}
+            className="block w-full bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold text-center hover:bg-amber-700 transition-colors"
+          >
+            Müşteri Detayına Git →
+          </Link>
+        </div>
+      )}
+
+      {picker && (
+        <div className="bg-white rounded-2xl border border-purple-200 p-5 space-y-3">
+          <div>
+            <p className="font-bold text-gray-900">{picker.customer.fullName}</p>
+            <p className="text-sm text-gray-500">Hangi kampanya ödülü kullandırılsın?</p>
+          </div>
+          <div className="space-y-2">
+            {picker.options.map((opt) => (
+              <button key={opt.campaign.id} onClick={() => selectCampaign(opt)}
+                className="w-full text-left bg-gray-50 hover:bg-purple-50 border border-gray-200 hover:border-purple-300 rounded-xl p-3 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">{opt.campaign.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{opt.campaign.rewardDescription}</p>
+                  </div>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Ödül hakkı var</span>
+                </div>
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setPicker(null)} className="text-xs text-gray-400 hover:text-gray-600">İptal</button>
+        </div>
+      )}
 
       {found && !done && (
         <div className="bg-white rounded-2xl border-2 border-purple-200 p-5 space-y-4">

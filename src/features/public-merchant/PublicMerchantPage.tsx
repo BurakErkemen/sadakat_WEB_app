@@ -2,37 +2,49 @@ import { useEffect, useState } from 'react'
 import { doc, getDoc } from 'firebase/firestore'
 import { useParams, Link } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
+import { brandStyle } from '@/lib/utils'
 import type { Merchant, Campaign } from '@/types'
 
 type State = 'loading' | 'not_found' | 'inactive' | 'ready'
+
+function toInstagramUrl(val: string): string {
+  if (!val) return ''
+  if (val.startsWith('http')) return val
+  const handle = val.replace(/^@/, '').trim()
+  return `https://instagram.com/${handle}`
+}
 
 export default function PublicMerchantPage() {
   const { slug } = useParams<{ slug: string }>()
   const [state, setState] = useState<State>('loading')
   const [merchant, setMerchant] = useState<Merchant | null>(null)
-  const [campaign, setCampaign] = useState<Campaign | null>(null)
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
 
   useEffect(() => {
     if (!slug) { setState('not_found'); return }
 
     async function load() {
       try {
-        // 1. slug → merchantId
         const slugSnap = await getDoc(doc(db, 'publicSlugs', slug!))
         if (!slugSnap.exists()) { setState('not_found'); return }
         const { merchantId, isActive } = slugSnap.data() as { merchantId: string; isActive: boolean }
         if (!isActive) { setState('inactive'); return }
 
-        // 2. merchant
         const mSnap = await getDoc(doc(db, 'merchants', merchantId))
         if (!mSnap.exists() || mSnap.data()['status'] !== 'active') { setState('inactive'); return }
         const m = { id: mSnap.id, ...mSnap.data() } as Merchant
         setMerchant(m)
 
-        // 3. active campaign
-        if (m.activeCampaignId) {
-          const cSnap = await getDoc(doc(db, 'merchants', merchantId, 'campaigns', m.activeCampaignId))
-          if (cSnap.exists()) setCampaign({ id: cSnap.id, ...cSnap.data() } as Campaign)
+        const activeIds: string[] =
+          m.activeCampaignIds && m.activeCampaignIds.length > 0
+            ? m.activeCampaignIds
+            : m.activeCampaignId ? [m.activeCampaignId] : []
+
+        if (activeIds.length > 0) {
+          const snaps = await Promise.all(
+            activeIds.map((id) => getDoc(doc(db, 'merchants', merchantId, 'campaigns', id)))
+          )
+          setCampaigns(snaps.filter((s) => s.exists()).map((s) => ({ id: s.id, ...s.data() } as Campaign)))
         }
 
         setState('ready')
@@ -47,7 +59,7 @@ export default function PublicMerchantPage() {
 
   if (state === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600" />
       </div>
     )
@@ -62,113 +74,208 @@ export default function PublicMerchantPage() {
   }
 
   const brand = merchant?.brandColor ?? '#6366f1'
-  const initial = merchant?.name?.[0]?.toUpperCase() ?? '?'
-  const isPoints = campaign?.type === 'points'
+  const brand2 = merchant?.brandColor2 ?? null
+  const headerStyle = brandStyle(brand, brand2)
+  const initial = merchant?.name?.[0]?.toLocaleUpperCase('tr') ?? '?'
+  const igHandle = merchant?.instagram ? merchant.instagram.replace(/^@/, '') : null
+  const igUrl = merchant?.instagram ? toInstagramUrl(merchant.instagram) : null
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="text-white py-10 px-6 text-center" style={{ backgroundColor: brand }}>
-        <div className="w-20 h-20 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl font-bold bg-white bg-opacity-20 border-2 border-white border-opacity-40">
-          {initial}
+
+      {/* Hero header — sadece metin, logo dışarıda */}
+      <div className="relative pt-12 pb-20 px-6 text-white" style={headerStyle}>
+        <div className="max-w-sm mx-auto text-center">
+          <h1 className="text-2xl font-extrabold">{merchant?.name}</h1>
+          <p className="text-sm text-white/70 mt-1">{merchant?.sector} · {merchant?.city}, {merchant?.district}</p>
+          {igHandle && igUrl && (
+            <a href={igUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-white/55 mt-1.5 hover:text-white/90 transition-colors">
+              @{igHandle} ↗
+            </a>
+          )}
         </div>
-        <h1 className="text-2xl font-bold">{merchant?.name}</h1>
-        <p className="text-sm opacity-80 mt-1">{merchant?.sector} · {merchant?.city}, {merchant?.district}</p>
-        {merchant?.instagram && (
-          <p className="text-sm opacity-70 mt-0.5">@{merchant.instagram.replace('@', '')}</p>
-        )}
+        {/* Wave geçişi */}
+        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gray-50 rounded-t-[2.5rem]" />
       </div>
 
-      <div className="max-w-sm mx-auto px-4 py-6 space-y-5">
-        {/* Aktif kampanya */}
-        {campaign ? (
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">{isPoints ? '🏆' : '✅'}</span>
-              <div>
-                <p className="font-bold text-gray-900">{campaign.name}</p>
-                <p className="text-xs text-gray-400">{isPoints ? 'Puan Sistemi' : 'Damga Sistemi'}</p>
+      {/* Floating logo — wave sınırına konumlandırılmış */}
+      <div className="flex justify-center -mt-14 relative z-10 mb-5">
+        <div
+          className="w-24 h-24 rounded-2xl bg-white overflow-hidden flex items-center justify-center"
+          style={{
+            boxShadow: `0 8px 32px ${brand}30, 0 0 0 4px white, 0 0 0 7px ${brand}30`,
+          }}
+        >
+          {merchant?.logoUrl ? (
+            <img src={merchant.logoUrl} alt={merchant.name ?? ''} className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-4xl font-black select-none" style={{ color: brand }}>{initial}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="max-w-sm mx-auto px-4 pb-5 space-y-4">
+
+        {/* Kampanyalar */}
+        {campaigns.length > 0 ? campaigns.map((campaign) => {
+          const isPoints = campaign.type === 'points'
+          const total = campaign.requiredStamps
+
+          return (
+            <div key={campaign.id} className="bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
+
+              {/* Kart başlığı */}
+              <div className="px-5 py-4 text-white" style={headerStyle}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-white/60 uppercase tracking-widest mb-0.5">
+                      {isPoints ? 'Puan Programı' : 'Damga Programı'}
+                    </p>
+                    <p className="font-extrabold text-lg leading-tight">{campaign.name}</p>
+                    {campaign.description && (
+                      <p className="text-xs text-white/65 mt-1 leading-relaxed">{campaign.description}</p>
+                    )}
+                  </div>
+                  <span className="text-3xl shrink-0 mt-0.5">{isPoints ? '🏆' : '✅'}</span>
+                </div>
+              </div>
+
+              {/* Kart gövdesi */}
+              <div className="p-4 space-y-4">
+
+                {/* Damga ızgarası — sabit 40px daireler, flex-wrap */}
+                {!isPoints && total <= 30 && (
+                  <div>
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from({ length: total }).map((_, i) => (
+                        <div key={i}
+                          className="w-10 h-10 rounded-full flex items-center justify-center select-none shrink-0"
+                          style={{ backgroundColor: brand + '12', border: `2px dashed ${brand}40` }}>
+                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: brand + '50' }} />
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2 text-right">{total} damga → ödül</p>
+                  </div>
+                )}
+
+                {/* Ödül bilgisi */}
+                <div className="flex items-center gap-3 rounded-xl p-3.5" style={{ backgroundColor: brand + '0D' }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0"
+                    style={{ backgroundColor: brand + '20' }}>
+                    🎁
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-400 font-medium">Hediyeniz</p>
+                    <p className="text-sm font-bold text-gray-900 leading-snug">{campaign.rewardDescription}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {isPoints ? `${total} puan topla` : `${total} damga topla`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Puan çarpanı */}
+                {isPoints && campaign.pointsPerUnit && (
+                  <p className="text-center text-xs text-gray-400">
+                    Her <strong className="text-gray-700">1 TL</strong> alışverişte{' '}
+                    <strong style={{ color: brand }}>{campaign.pointsPerUnit.toFixed(2)} puan</strong> kazanırsınız
+                  </p>
+                )}
               </div>
             </div>
-
-            {campaign.description && (
-              <p className="text-sm text-gray-600">{campaign.description}</p>
-            )}
-
-            {/* İlerleme görseli */}
-            {!isPoints && campaign.requiredStamps <= 12 && (
-              <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(campaign.requiredStamps, 6)}, 1fr)` }}>
-                {Array.from({ length: campaign.requiredStamps }).map((_, i) => (
-                  <div key={i}
-                    className="aspect-square rounded-lg border-2 flex items-center justify-center"
-                    style={{ borderColor: brand, opacity: 0.3 }}
-                  />
-                ))}
-              </div>
-            )}
-
-            <div className="rounded-xl p-4 text-white space-y-1" style={{ backgroundColor: brand }}>
-              <p className="text-xs opacity-80 uppercase font-medium tracking-wide">Ödülünüz</p>
-              <p className="font-bold text-lg">{campaign.rewardDescription}</p>
-              <p className="text-sm opacity-80">
-                {isPoints
-                  ? `${campaign.requiredStamps} puan topla, ödülünü kazan`
-                  : `${campaign.requiredStamps} damga topla, ödülünü kazan`}
-              </p>
-            </div>
-
-            {isPoints && campaign.pointsPerUnit && (
-              <p className="text-xs text-gray-500 text-center">
-                Her 1 TL alışverişte {campaign.pointsPerUnit.toFixed(2)} puan kazanırsınız
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 text-center text-gray-400">
-            <p className="text-2xl mb-2">📭</p>
-            <p className="text-sm">Şu an aktif kampanya yok</p>
+          )
+        }) : (
+          <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
+            <p className="text-3xl mb-3">📭</p>
+            <p className="text-sm text-gray-400">Şu an aktif kampanya yok</p>
           </div>
         )}
 
-        {/* Nasıl katılınır */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
-          <p className="font-semibold text-gray-900">Nasıl Katılırsınız?</p>
-          <div className="space-y-3">
-            {[
-              { num: '1', text: 'İşletmeye gelin ve sadakat programına dahil olmak istediğinizi söyleyin.' },
-              { num: '2', text: 'Telefon numaranızı verin, size dijital sadakat kartınız oluşturulsun.' },
-              { num: '3', text: 'Her alışverişinizde damganızı/puanınızı biriktirin ve ödülünüzü kazanın.' },
-            ].map((s) => (
-              <div key={s.num} className="flex items-start gap-3">
-                <span className="w-6 h-6 rounded-full text-white text-xs flex items-center justify-center flex-shrink-0 font-bold mt-0.5"
-                  style={{ backgroundColor: brand }}>
-                  {s.num}
-                </span>
-                <p className="text-sm text-gray-600">{s.text}</p>
-              </div>
-            ))}
+        {/* Nasıl katılırsınız — yatay stepper */}
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          <div className="px-5 pt-5 pb-1">
+            <p className="font-bold text-gray-900">Nasıl Katılırsınız?</p>
+          </div>
+
+          <div className="px-5 pt-4 pb-5">
+            {/* Adım göstergeleri */}
+            <div className="relative flex justify-between items-start">
+              {/* Bağlantı çizgisi — daire merkezlerini birleştirir */}
+              <div
+                className="absolute top-4 left-[calc(16.67%-1px)] right-[calc(16.67%-1px)] h-px"
+                style={{ background: `linear-gradient(to right, ${brand}50, ${brand}30, ${brand}50)` }}
+              />
+
+              {[
+                { num: 1, icon: '👋', title: 'Gelin', desc: 'İşletmeye gelin ve kasiyere katılmak istediğinizi söyleyin.' },
+                { num: 2, icon: '📲', title: 'Kayıt Olun', desc: 'Telefonunuzu verin, dijital kartınız oluşturulsun.' },
+                { num: 3, icon: '🎁', title: 'Kazanın', desc: 'Her alışverişte puan/damga biriktirip ödülünüzü alın.' },
+              ].map((step) => (
+                <div key={step.num} className="flex-1 flex flex-col items-center gap-2.5 text-center relative z-10 px-1">
+                  {/* Numara dairesi */}
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-black shadow-sm"
+                    style={headerStyle}
+                  >
+                    {step.num}
+                  </div>
+                  {/* İkon kutusu */}
+                  <div
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-xl"
+                    style={{ backgroundColor: brand + '12' }}
+                  >
+                    {step.icon}
+                  </div>
+                  {/* Başlık + açıklama */}
+                  <div>
+                    <p className="text-xs font-bold text-gray-900 leading-tight">{step.title}</p>
+                    <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">{step.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* İletişim */}
-        {(merchant?.phone || merchant?.googleMapsUrl) && (
+        {(merchant?.phone || merchant?.googleMapsUrl || merchant?.instagram || merchant?.menuUrl) && (
           <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
-            <p className="font-semibold text-gray-900">İletişim</p>
-            {merchant.phone && (
-              <a href={`tel:${merchant.phone}`} className="flex items-center gap-2 text-sm text-gray-700 hover:text-indigo-600">
-                <span>📞</span> {merchant.phone}
-              </a>
-            )}
-            {merchant.googleMapsUrl && (
-              <a href={merchant.googleMapsUrl} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-2 text-sm text-gray-700 hover:text-indigo-600">
-                <span>📍</span> Haritada Gör
+            <p className="font-bold text-gray-900">İletişim</p>
+
+            <div className="grid grid-cols-2 gap-2">
+              {merchant.phone && (
+                <a href={`tel:${merchant.phone}`}
+                  className="flex items-center gap-2 bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl px-3 py-3 text-sm text-gray-700 font-medium truncate">
+                  <span className="shrink-0">📞</span>
+                  <span className="truncate">{merchant.phone}</span>
+                </a>
+              )}
+              {merchant.googleMapsUrl && (
+                <a href={merchant.googleMapsUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl px-3 py-3 text-sm text-gray-700 font-medium">
+                  <span>📍</span> Haritada Gör
+                </a>
+              )}
+              {igUrl && (
+                <a href={igUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 bg-gray-50 hover:bg-pink-50 hover:text-pink-600 transition-colors rounded-xl px-3 py-3 text-sm text-gray-700 font-medium">
+                  <span>📷</span> @{igHandle}
+                </a>
+              )}
+            </div>
+
+            {merchant.menuUrl && (
+              <a href={merchant.menuUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 text-sm font-bold text-white w-full py-3.5 rounded-xl hover:opacity-90 transition-opacity"
+                style={headerStyle}>
+                🍽️ Menüyü Gör
               </a>
             )}
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-300">DamgaKart · Dijital Sadakat Programı</p>
+        <p className="text-center text-xs text-gray-300 pb-4">SadeX · Cyan Danışmanlık</p>
       </div>
     </div>
   )
@@ -176,7 +283,7 @@ export default function PublicMerchantPage() {
 
 function InfoScreen({ icon, title, message }: { icon: string; title: string; message: string }) {
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="text-center max-w-xs">
         <p className="text-5xl mb-4">{icon}</p>
         <h1 className="text-xl font-bold text-gray-900 mb-2">{title}</h1>

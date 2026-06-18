@@ -5,6 +5,7 @@ export interface UserProfile {
   email: string
   phone?: string
   merchantId?: string
+  status?: 'pending' | 'approved' | 'rejected'
   createdAt: Timestamp
   updatedAt: Timestamp
 }
@@ -19,10 +20,13 @@ export interface Merchant {
   phone: string
   instagram?: string
   googleMapsUrl?: string
+  menuUrl?: string
   logoUrl?: string
   brandColor?: string
+  brandColor2?: string
   ownerId: string
   activeCampaignId?: string
+  activeCampaignIds?: string[]
   status: 'active' | 'passive'
   createdAt: Timestamp
   updatedAt: Timestamp
@@ -90,6 +94,7 @@ export interface Transaction {
 export interface Subscription {
   plan: 'trial' | 'mini' | 'standard' | 'pro'
   status: 'active' | 'trialing' | 'past_due' | 'canceled'
+  billingCycle?: 'monthly' | 'yearly' | null
   currentPeriodStart: Timestamp
   currentPeriodEnd: Timestamp
   updatedAt: Timestamp

@@ -1,16 +1,29 @@
 import { useState, useEffect } from 'react'
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
+import { brandStyle } from '@/lib/utils'
+
+function toInstagramUrl(val: string): string {
+  if (!val) return ''
+  if (val.startsWith('http')) return val
+  const handle = val.replace(/^@/, '').trim()
+  return `https://instagram.com/${handle}`
+}
 
 export default function SettingsPage() {
   const { merchant } = useMerchant()
+  const navigate = useNavigate()
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [instagram, setInstagram] = useState('')
   const [googleMapsUrl, setGoogleMapsUrl] = useState('')
+  const [menuUrl, setMenuUrl] = useState('')
   const [brandColor, setBrandColor] = useState('#6366f1')
+  const [brandColor2, setBrandColor2] = useState('')
+  const [useGradient, setUseGradient] = useState(false)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -19,7 +32,11 @@ export default function SettingsPage() {
     setPhone(merchant.phone)
     setInstagram(merchant.instagram ?? '')
     setGoogleMapsUrl(merchant.googleMapsUrl ?? '')
+    setMenuUrl(merchant.menuUrl ?? '')
     setBrandColor(merchant.brandColor ?? '#6366f1')
+    const c2 = merchant.brandColor2 ?? ''
+    setBrandColor2(c2 || '#a855f7')
+    setUseGradient(!!c2)
   }, [merchant])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -28,9 +45,14 @@ export default function SettingsPage() {
     setLoading(true)
     try {
       await updateDoc(doc(db, 'merchants', merchant.id), {
-        name, phone, instagram: instagram || null,
+        name,
+        phone,
+        instagram: instagram || null,
         googleMapsUrl: googleMapsUrl || null,
-        brandColor, updatedAt: serverTimestamp(),
+        menuUrl: menuUrl || null,
+        brandColor,
+        brandColor2: useGradient ? brandColor2 : null,
+        updatedAt: serverTimestamp(),
       })
       toast.success('Ayarlar kaydedildi')
     } catch (err) {
@@ -43,47 +65,109 @@ export default function SettingsPage() {
 
   if (!merchant) return null
 
+  const instagramLink = instagram ? toInstagramUrl(instagram) : null
+  const previewStyle = brandStyle(brandColor, useGradient ? brandColor2 : null)
+
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-bold text-gray-900">İşletme Ayarları</h1>
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-gray-600 text-sm">← Geri</button>
+        <h1 className="text-xl font-bold text-gray-900">İşletme Ayarları</h1>
+      </div>
+
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">İşletme Adı</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} required
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" />
         </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Telefon</label>
           <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" />
         </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Instagram (opsiyonel)</label>
           <input type="text" value={instagram} onChange={(e) => setInstagram(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            placeholder="@isletmem" />
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="@isletmem veya kullanici_adi" />
+          {instagramLink && (
+            <a href={instagramLink} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 mt-1.5 text-xs text-violet-600 hover:underline">
+              ↗ {instagramLink}
+            </a>
+          )}
         </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Google Maps Linki (opsiyonel)</label>
           <input type="url" value={googleMapsUrl} onChange={(e) => setGoogleMapsUrl(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
             placeholder="https://maps.google.com/…" />
         </div>
+
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Marka Rengi</label>
-          <div className="flex items-center gap-3">
-            <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)}
-              className="h-10 w-16 border border-gray-300 rounded-lg cursor-pointer" />
-            <span className="text-sm text-gray-500">{brandColor}</span>
-          </div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            QR Menü Linki (opsiyonel)
+          </label>
+          <input type="url" value={menuUrl} onChange={(e) => setMenuUrl(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="https://menunuz.com/qr veya Google Drive linki" />
+          <p className="text-xs text-gray-400 mt-0.5">Müşteri sayfasında "Menüyü Gör" butonu olarak görünür</p>
         </div>
+
+        {/* ── Marka Rengi ───────────────────────────────────── */}
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-700">Marka Rengi</label>
+
+          {/* Gradient toggle */}
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input type="checkbox" checked={useGradient} onChange={(e) => setUseGradient(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500" />
+            <span className="text-sm text-gray-600">Gradient (geçişli iki renk) kullan</span>
+          </label>
+
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col items-center gap-1">
+              <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)}
+                className="h-10 w-14 border border-gray-300 rounded-lg cursor-pointer" />
+              <span className="text-xs text-gray-400">{useGradient ? 'Başlangıç' : 'Renk'}</span>
+            </div>
+
+            {useGradient && (
+              <>
+                <svg className="text-gray-300 shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+                <div className="flex flex-col items-center gap-1">
+                  <input type="color" value={brandColor2} onChange={(e) => setBrandColor2(e.target.value)}
+                    className="h-10 w-14 border border-gray-300 rounded-lg cursor-pointer" />
+                  <span className="text-xs text-gray-400">Bitiş</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Önizleme */}
+          <div
+            className="h-12 rounded-xl w-full transition-all"
+            style={previewStyle}
+          />
+          <p className="text-xs text-gray-400">
+            {useGradient ? `${brandColor} → ${brandColor2}` : brandColor}
+          </p>
+        </div>
+
         <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 space-y-1">
           <p><span className="font-medium">Sektör:</span> {merchant.sector}</p>
           <p><span className="font-medium">Şehir/İlçe:</span> {merchant.city} / {merchant.district}</p>
           <p><span className="font-medium">İşletme Linki:</span> /m/{merchant.slug}</p>
         </div>
+
         <button type="submit" disabled={loading}
-          className="w-full bg-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-indigo-700 disabled:opacity-50">
+          className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 transition-all">
           {loading ? 'Kaydediliyor…' : 'Kaydet'}
         </button>
       </form>

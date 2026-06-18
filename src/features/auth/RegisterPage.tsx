@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth'
+import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from 'firebase/auth'
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -11,7 +11,10 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [kvkkAccepted, setKvkkAccepted] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [emailError, setEmailError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -19,23 +22,37 @@ export default function RegisterPage() {
       toast.error('Şifre en az 6 karakter olmalıdır.')
       return
     }
+    if (!termsAccepted || !kvkkAccepted) {
+      toast.error('Devam etmek için tüm onayları vermeniz gerekiyor.')
+      return
+    }
+    setEmailError(null)
     setLoading(true)
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password)
       await updateProfile(cred.user, { displayName })
+      const consentDate = serverTimestamp()
       await setDoc(doc(db, 'users', cred.user.uid), {
         displayName,
         email,
         phone: null,
         merchantId: null,
+        status: 'approved',
+        // Yasal onay kayıtları — KVKK ispat yükümlülüğü için
+        consents: {
+          terms: true,
+          kvkk: true,
+          consentDate,
+        },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
-      navigate('/onboarding')
+      sendEmailVerification(cred.user).catch(console.error)
+      navigate('/verify-email')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Kayıt başarısız.'
       if (msg.includes('email-already-in-use')) {
-        toast.error('Bu e-posta adresi zaten kullanımda.')
+        setEmailError('Bu e-posta adresi zaten kullanımda.')
       } else {
         toast.error('Kayıt başarısız. Lütfen tekrar deneyin.')
       }
@@ -45,12 +62,17 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">DamgaKart</h1>
-          <p className="text-gray-500 mt-1">Yeni İşletme Kaydı</p>
+          <Link to="/" className="inline-block mb-4">
+            <img src="/sadex.png" alt="Sadex" className="h-12 w-auto mx-auto"
+              style={{ objectFit: 'contain', maxWidth: '180px' }}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+          </Link>
+          <p className="text-gray-500 mt-1 text-sm">Yeni İşletme Kaydı</p>
         </div>
+
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Ad Soyad</label>
@@ -59,7 +81,7 @@ export default function RegisterPage() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               placeholder="Ahmet Yılmaz"
             />
           </div>
@@ -68,11 +90,17 @@ export default function RegisterPage() {
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(null) }}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:border-transparent ${emailError ? 'border-red-400 focus:ring-red-400 bg-red-50' : 'border-gray-300 focus:ring-violet-500'}`}
               placeholder="ornek@isletme.com"
             />
+            {emailError && (
+              <div className="mt-1.5 text-xs text-red-600 flex items-center gap-1">
+                <span>{emailError}</span>
+                <Link to="/login" className="font-semibold underline">Giriş yapmak ister misiniz?</Link>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Şifre</label>
@@ -81,24 +109,66 @@ export default function RegisterPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               placeholder="En az 6 karakter"
             />
           </div>
+
+          {/* Yasal onaylar */}
+          <div className="space-y-3 border-t border-gray-100 pt-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 shrink-0"
+              />
+              <span className="text-xs text-gray-600 leading-relaxed">
+                <Link to="/kullanim-kosullari" target="_blank" className="text-violet-600 hover:underline font-medium">Kullanım Koşullarını</Link>,{' '}
+                <Link to="/gizlilik" target="_blank" className="text-violet-600 hover:underline font-medium">Gizlilik Politikasını</Link>{' '}
+                ve{' '}
+                <Link to="/kvkk" target="_blank" className="text-violet-600 hover:underline font-medium">Çerez Politikasını</Link>{' '}
+                okudum, kabul ediyorum.
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={kvkkAccepted}
+                onChange={(e) => setKvkkAccepted(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 shrink-0"
+              />
+              <span className="text-xs text-gray-600 leading-relaxed">
+                6698 sayılı{' '}
+                <Link to="/kvkk" target="_blank" className="text-violet-600 hover:underline font-medium">KVKK</Link>{' '}
+                kapsamında kişisel verilerimin işlenmesine, hizmet iyileştirme ve iletişim amacıyla kullanılmasına onay veriyorum.
+              </span>
+            </label>
+          </div>
+
           <button
             type="submit"
-            disabled={loading}
-            className="w-full bg-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            disabled={loading || !termsAccepted || !kvkkAccepted}
+            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 transition-all shadow-sm"
           >
             {loading ? 'Kaydediliyor…' : 'Kayıt Ol'}
           </button>
         </form>
-        <p className="text-center text-sm text-gray-500 mt-4">
-          Zaten hesabınız var mı?{' '}
-          <Link to="/login" className="text-indigo-600 font-medium hover:underline">
-            Giriş Yap
-          </Link>
-        </p>
+
+        <div className="text-center space-y-2 mt-4">
+          <p className="text-sm text-gray-500">
+            Zaten hesabınız var mı?{' '}
+            <Link to="/login" className="text-violet-600 font-medium hover:underline">
+              Giriş Yap
+            </Link>
+          </p>
+          <p>
+            <Link to="/" className="text-xs text-gray-400 hover:text-violet-600 transition-colors">
+              ← Ana Sayfaya Dön
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )

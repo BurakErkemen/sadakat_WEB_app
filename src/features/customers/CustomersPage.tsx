@@ -19,14 +19,25 @@ export default function CustomersPage() {
       .then((snap) => setCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer))))
       .catch(console.error)
       .finally(() => setLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [merchant?.id])
 
   const filtered = customers.filter((c) => {
-    const q = search.toLowerCase()
-    return (
-      c.fullName.toLowerCase().includes(q) ||
-      c.normalizedPhone.includes(q.replace(/\D/g, ''))
-    )
+    const q = search.toLocaleLowerCase('tr')
+
+    // İsim araması — Türkçe karakter duyarlı
+    if (c.fullName.toLocaleLowerCase('tr').includes(q)) return true
+
+    // Telefon araması: sorgudan rakam dışı karakterleri at,
+    // ardından baştaki 0 veya 90 ülke kodunu normalizedPhone ile aynı formata getir
+    const qDigits = search.replace(/\D/g, '')
+    if (qDigits.length === 0) return false
+    const qNorm = qDigits.startsWith('90') && qDigits.length > 2
+      ? qDigits.slice(2)
+      : qDigits.startsWith('0')
+      ? qDigits.slice(1)
+      : qDigits
+    return qNorm.length > 0 && c.normalizedPhone.includes(qNorm)
   })
 
   if (mLoading || loading) return <LoadingSkeleton />

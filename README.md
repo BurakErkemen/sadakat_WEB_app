@@ -41,7 +41,28 @@ npm run dev
 firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-### 6. Hosting Deploy
+### 6. Firebase Emulator
+Firestore Emulator Java gerektirir. Önce terminalde kontrol edin:
+```bash
+java -version
+```
+Java yoksa Windows için örnek kurulum:
+```bash
+winget install EclipseAdoptium.Temurin.21.JDK
+```
+Kurulumdan sonra terminali kapatıp yeniden açın.
+
+Emulator'ları başlatmak için:
+```bash
+npm run emulators
+```
+
+Rules testlerini emulator ile tek komutta çalıştırmak için:
+```bash
+npm run test:rules:emulator
+```
+
+### 7. Hosting Deploy
 ```bash
 npm run build
 firebase deploy --only hosting
@@ -54,7 +75,9 @@ firebase deploy --only hosting
 | Koleksiyon | Erişim |
 |---|---|
 | `users/{uid}` | Sadece sahibi |
-| `merchants/{mid}` | get: public, list: admin, write: owner/admin |
+| `merchants/{mid}` | get: public, list: admin veya kendi kaydı (ownerId eşleşmeli), write: owner/admin |
+| `merchants/{mid}/subscription/current` | get: owner/admin; create: owner (sadece trial); update/delete: **sadece admin** |
+| `supportTickets/{tid}` | create/get/list: owner (merchantId eşleşmeli) veya admin; update/delete: **sadece admin** |
 | `publicSlugs/{slug}` | get: public, create: owner |
 | `merchants/{mid}/campaigns/{cid}` | get: public, list/write: owner/admin |
 | `merchants/{mid}/customers/{cid}` | PII — sadece owner/admin |
@@ -67,17 +90,19 @@ firebase deploy --only hosting
 
 ## Mimari Notlar (MVP Sınırları)
 
-- `subscription/current` owner tarafından **yazılamaz**. Plan değişimi admin panelinden yapılır.
+- `subscription/current` owner tarafından **sadece trial oluşturulabilir** (onboarding akışı için). Plan değişimi ve yükseltme **sadece admin** panelinden yapılır. (D-009)
 - Kullanım sayacı (`usage`) subscription'da **tutulmaz**. "Bu ay N işlem" → `transactions` koleksiyonunda `createdAt >= ayBaşı` sorgusuyla anlık hesaplanır.
-- **Damga ekleme** → `writeBatch` (atomik: membership + publicCard + transaction aynı anda).
+- **Damga ekleme** → `writeBatch` (atomik: membership + publicCard + transaction aynı anda). Puan modu da destekleniyor (`amount`, `purchaseAmount`).
 - **Ödül kullandırma** → `runTransaction` (koşullu: `currentStamps >= requiredStamps` transaction içinde kontrol edilir).
 - `publicCards` ince model, **PII yok**: phone, fullName, customerId asla yazılmaz.
 - Campaign/merchant bilgileri publicCard'a **kopyalanmaz**; `/c/:cardToken` her yüklenişte 3 ayrı `get` yapar (canlı güncellik).
 - Public `list`/`query` yok. Telefon numarasıyla public sorgu **yasak** (PII sızıntısı).
-- İşletme başına **tek aktif kampanya**.
-- `/m/:merchantSlug` opsiyonel — MVP'de yok, çekirdek akış `/c/:cardToken`.
+- **Trial/Mini**: tek aktif kampanya. **Standart/Pro**: `activeCampaignIds[]` ile birden fazla kampanya aynı anda aktif edilebilir. (D-012)
+- `/m/:slug` public işletme tanıtım sayfası **mevcut** — aktif kampanyaları ve iletişim bilgilerini gösterir. (D-007)
 - Staff ve self-enroll **MVP dışı**.
 - Plan limitleri **hard enforce değil** — sadece UI uyarısı/sayacı.
+- Admin paneli: `/yonetim` — işletme/plan/abonelik/destek yönetimi. Eski `/admin` → `/yonetim` yönlendirilir.
+- Pending/rejected kullanıcı akışı: kayıt sonrası `/pending` ekranı, admin onayı ile `/onboarding`'e geçiş.
 
 ---
 
@@ -91,7 +116,7 @@ firebase deploy --only hosting
 6. `publicCards` update'te `merchantId/campaignId/membershipId` **değiştirilemez**.
 7. Transaction **silinemez/değiştirilemez**.
 8. Kampanya düzenlenince public kart **güncel değeri** gösterir (denormalizasyon yok).
-9. Yeni kampanya aktif edilince eskisi pasife geçer; `activeCampaignId` güncellenir.
+9. Trial/Mini: yeni kampanya aktif edilince eskisi pasife geçer. Standart/Pro: `activeCampaignIds[]` ile çoklu aktif desteklenir; her kampanya bağımsız aktif/pasif yapılabilir.
 10. Pasif kart sayfası nazik mesaj gösterir, beyaz ekran vermez.
 11. Alınmış slug'da onboarding hata gösterir.
 12. Owner login sonrası `users.merchantId` ile kendi işletmesine ulaşır.

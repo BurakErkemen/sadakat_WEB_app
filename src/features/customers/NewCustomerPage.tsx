@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { collection, getDocs, query, where } from 'firebase/firestore'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db, createCustomerWithCard } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
@@ -17,6 +17,7 @@ export default function NewCustomerPage() {
   const [campaignId, setCampaignId] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ cardToken: string; customerId: string } | null>(null)
+  const [duplicate, setDuplicate] = useState<{ id: string; fullName: string } | null>(null)
 
   useEffect(() => {
     if (!merchant) return
@@ -27,7 +28,27 @@ export default function NewCustomerPage() {
         if (list.length > 0) setCampaignId(list[0].id)
       })
       .catch(console.error)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [merchant?.id])
+
+  async function checkDuplicate(rawPhone: string): Promise<{ id: string; fullName: string } | null> {
+    if (!merchant) return null
+    const norm = normalizePhone(rawPhone)
+    if (norm.length !== 10) return null
+    const snap = await getDocs(query(
+      collection(db, 'merchants', merchant.id, 'customers'),
+      where('normalizedPhone', '==', norm)
+    ))
+    if (snap.empty) return null
+    const d = snap.docs[0]
+    return { id: d.id, fullName: d.data()['fullName'] as string }
+  }
+
+  async function handlePhoneBlur() {
+    setDuplicate(null)
+    const found = await checkDuplicate(phone)
+    if (found) setDuplicate(found)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -39,6 +60,12 @@ export default function NewCustomerPage() {
     const norm = normalizePhone(phone)
     if (norm.length !== 10) {
       toast.error('Geçerli bir telefon numarası girin')
+      return
+    }
+    // Final guard — submit anında da kontrol et
+    const found = await checkDuplicate(phone)
+    if (found) {
+      setDuplicate(found)
       return
     }
     setLoading(true)
@@ -120,11 +147,23 @@ export default function NewCustomerPage() {
           <input
             type="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => { setPhone(e.target.value); setDuplicate(null) }}
+            onBlur={() => { void handlePhoneBlur() }}
             required
-            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className={`w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:border-transparent ${duplicate ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-gray-300 focus:ring-indigo-500'}`}
             placeholder="0532 000 00 00"
           />
+          {duplicate && (
+            <div className="mt-1.5 text-xs text-red-600 flex items-center gap-1.5">
+              <span>Bu numara zaten kayıtlı:</span>
+              <Link
+                to={`/app/customers/${duplicate.id}`}
+                className="font-semibold underline"
+              >
+                {duplicate.fullName} →
+              </Link>
+            </div>
+          )}
         </div>
         {campaigns.length > 0 && (
           <div>
@@ -151,7 +190,7 @@ export default function NewCustomerPage() {
         </div>
         <button
           type="submit"
-          disabled={loading || campaigns.length === 0}
+          disabled={loading || campaigns.length === 0 || !!duplicate}
           className="w-full bg-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-indigo-700 disabled:opacity-50"
         >
           {loading ? 'Oluşturuluyor…' : 'Müşteri Oluştur ve Kart Bağla'}

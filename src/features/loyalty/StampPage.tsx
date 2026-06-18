@@ -1,25 +1,30 @@
 import { useState } from 'react'
 import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
-import { useLocation } from 'react-router-dom'
+import { useLocation, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db, addStamp } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
-import { useMerchant } from '@/hooks/useMerchant'
+import { useMerchantSub } from '@/contexts/MerchantSubContext'
 import { normalizePhone, formatPhone } from '@/lib/phone'
 import QRScanner from '@/components/QRScanner'
 import type { Customer, Membership, Campaign } from '@/types'
 
 interface FoundData { customer: Customer; membership: Membership; campaign: Campaign }
+interface PickerOption { membership: Membership; campaign: Campaign }
+interface PickerData { customer: Customer; options: PickerOption[] }
+
 
 export default function StampPage() {
   const { user } = useAuth()
-  const { merchant } = useMerchant()
+  const { merchant, features } = useMerchantSub()
   const location = useLocation()
 
   const [phone, setPhone] = useState((location.state as { searchPhone?: string })?.searchPhone ?? '')
   const [note, setNote] = useState('')
   const [purchaseAmount, setPurchaseAmount] = useState('')
   const [found, setFound] = useState<FoundData | null>(null)
+  const [picker, setPicker] = useState<PickerData | null>(null)
+  const [noCampaign, setNoCampaign] = useState<Customer | null>(null)
   const [searching, setSearching] = useState(false)
   const [stamping, setStamping] = useState(false)
   const [done, setDone] = useState(false)
@@ -32,11 +37,11 @@ export default function StampPage() {
     await searchCustomer({ normalizedPhone: norm })
   }
 
-  async function fetchActiveCampaign() {
-    if (!merchant?.activeCampaignId) { toast.error('Aktif kampanya yok. Lütfen önce bir kampanya aktif edin.'); return null }
-    const campSnap = await getDoc(doc(db, 'merchants', merchant.id, 'campaigns', merchant.activeCampaignId))
-    if (!campSnap.exists()) { toast.error('Kampanya bulunamadı'); return null }
-    return { id: campSnap.id, ...campSnap.data() } as Campaign
+  async function resolveFoundData(customer: Customer, membership: Membership): Promise<void> {
+    if (!merchant) return
+    const campSnap = await getDoc(doc(db, 'merchants', merchant.id, 'campaigns', membership.campaignId))
+    if (!campSnap.exists()) { setNoCampaign(customer); return }
+    setFound({ customer, membership, campaign: { id: campSnap.id, ...campSnap.data() } as Campaign })
   }
 
   async function handleQRScan(cardToken: string) {
@@ -56,17 +61,14 @@ export default function StampPage() {
       const cSnap = await getDoc(doc(db, 'merchants', merchant.id, 'customers', membership.customerId))
       const customer = { id: cSnap.id, ...cSnap.data() } as Customer
 
-      const campaign = await fetchActiveCampaign()
-      if (!campaign) return
-
-      setFound({ customer, membership, campaign })
+      await resolveFoundData(customer, membership)
     } catch (err) { console.error(err); toast.error('QR okuma başarısız') }
     finally { setSearching(false) }
   }
 
   async function searchCustomer({ normalizedPhone }: { normalizedPhone: string }) {
     if (!merchant) return
-    setSearching(true); setFound(null); setDone(false)
+    setSearching(true); setFound(null); setPicker(null); setNoCampaign(null); setDone(false)
     try {
       const cSnap = await getDocs(query(
         collection(db, 'merchants', merchant.id, 'customers'),
@@ -79,15 +81,30 @@ export default function StampPage() {
         collection(db, 'merchants', merchant.id, 'memberships'),
         where('customerId', '==', customer.id), where('status', '==', 'active')
       ))
-      if (mSnap.empty) { toast.error('Aktif üyelik bulunamadı'); return }
-      const membership = { id: mSnap.docs[0].id, ...mSnap.docs[0].data() } as Membership
+      if (mSnap.empty) { toast.error('Bu müşterinin aktif üyeliği yok'); return }
+      const memberships = mSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Membership))
 
-      const campaign = await fetchActiveCampaign()
-      if (!campaign) return
+      // Kampanyaları çek — silinmiş olanları filtrele
+      const options: PickerOption[] = []
+      await Promise.all(memberships.map(async (m) => {
+        const cmpSnap = await getDoc(doc(db, 'merchants', merchant.id, 'campaigns', m.campaignId))
+        if (cmpSnap.exists()) options.push({ membership: m, campaign: { id: cmpSnap.id, ...cmpSnap.data() } as Campaign })
+      }))
 
-      setFound({ customer, membership, campaign })
+      if (options.length === 0) { setNoCampaign(customer); return }
+      if (options.length === 1) {
+        setFound({ customer, membership: options[0].membership, campaign: options[0].campaign })
+      } else {
+        setPicker({ customer, options })
+      }
     } catch (err) { console.error(err); toast.error('Arama başarısız') }
     finally { setSearching(false) }
+  }
+
+  function selectCampaign(option: PickerOption) {
+    if (!picker) return
+    setFound({ customer: picker.customer, membership: option.membership, campaign: option.campaign })
+    setPicker(null)
   }
 
   // Puan modunda kazanılacak puan miktarını hesapla
@@ -126,12 +143,15 @@ export default function StampPage() {
     finally { setStamping(false) }
   }
 
-  function reset() { setPhone(''); setNote(''); setPurchaseAmount(''); setFound(null); setDone(false) }
+  function reset() { setPhone(''); setNote(''); setPurchaseAmount(''); setFound(null); setPicker(null); setNoCampaign(null); setDone(false) }
 
   const isPoints = found?.campaign.type === 'points'
   const earnedAmount = found ? (isPoints ? calcPoints(found.campaign) : 1) : 0
   const newTotal = found ? found.membership.currentStamps + earnedAmount : 0
-  const willReward = found ? newTotal >= found.campaign.requiredStamps : false
+  // Sadece eşiğin altındayken ve bu damgayla aşılıyorsa uyar
+  const willReward = found
+    ? found.membership.currentStamps < found.campaign.requiredStamps && newTotal >= found.campaign.requiredStamps
+    : false
 
   return (
     <div className="space-y-5">
@@ -141,7 +161,7 @@ export default function StampPage() {
 
       {/* Arama yöntemleri */}
       <div className="grid grid-cols-2 gap-3">
-        <div className={`bg-white rounded-xl border-2 p-3 ${!found ? 'border-indigo-200' : 'border-gray-100'}`}>
+        <div className={`rounded-xl border-2 p-3 transition-colors ${!found ? 'bg-white border-indigo-200' : 'bg-white border-gray-100'}`}>
           <form onSubmit={findByPhone} className="space-y-2">
             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Telefon ile Ara</label>
             <input
@@ -156,14 +176,69 @@ export default function StampPage() {
           </form>
         </div>
         <button
-          onClick={() => setShowScanner(true)}
-          className="bg-white rounded-xl border-2 border-gray-100 p-3 flex flex-col items-center justify-center gap-2 hover:border-indigo-200 transition-colors"
+          onClick={() => features.qrLookup ? setShowScanner(true) : undefined}
+          disabled={!features.qrLookup}
+          className={`rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-2 transition-colors ${features.qrLookup ? 'bg-white border-gray-100 hover:border-indigo-200 cursor-pointer' : 'bg-gray-50 border-gray-100 opacity-60 cursor-not-allowed'}`}
         >
-          <span className="text-3xl">📷</span>
+          <span className="text-3xl">{features.qrLookup ? '📷' : '🔒'}</span>
           <span className="text-sm font-medium text-gray-700">QR Tara</span>
-          <span className="text-xs text-gray-400 text-center">Müşterinin kartını tara</span>
+          <span className="text-xs text-gray-400 text-center">
+            {features.qrLookup ? 'Müşterinin kartını tara' : 'Standart planında aktif'}
+          </span>
         </button>
       </div>
+
+      {/* Kampanya seçici (birden fazla aktif kampanya varsa) */}
+      {picker && (
+        <div className="bg-white rounded-2xl border border-indigo-200 p-5 space-y-3">
+          <div>
+            <p className="font-bold text-gray-900">{picker.customer.fullName}</p>
+            <p className="text-sm text-gray-500">Hangi kampanyaya damga eklensin?</p>
+          </div>
+          <div className="space-y-2">
+            {picker.options.map((opt) => (
+              <button key={opt.campaign.id} onClick={() => selectCampaign(opt)}
+                className="w-full text-left bg-gray-50 hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 rounded-xl p-3 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">{opt.campaign.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {opt.membership.currentStamps} / {opt.campaign.requiredStamps}{' '}
+                      {opt.campaign.type === 'points' ? 'puan' : 'damga'}
+                    </p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${opt.campaign.type === 'points' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                    {opt.campaign.type === 'points' ? '🏆 Puan' : '✅ Damga'}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setPicker(null)} className="text-xs text-gray-400 hover:text-gray-600">İptal</button>
+        </div>
+      )}
+
+      {/* Kampanyası olmayan müşteri */}
+      {noCampaign && !found && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-900">{noCampaign.fullName}</p>
+              <p className="text-sm text-amber-700 mt-1">
+                Bu müşterinin kayıtlı kampanyası silinmiş veya bulunamadı.
+                Müşteri detayından yeni bir kampanyaya ekleyebilirsiniz.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/app/customers/${noCampaign.id}`}
+            className="block w-full bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold text-center hover:bg-amber-700 transition-colors"
+          >
+            Müşteri Detayına Git →
+          </Link>
+        </div>
+      )}
 
       {/* Bulunan müşteri */}
       {found && !done && (

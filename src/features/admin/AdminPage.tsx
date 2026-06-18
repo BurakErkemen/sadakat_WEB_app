@@ -1,24 +1,48 @@
 import { useEffect, useState } from 'react'
 import {
-  collection, getDocs, getDoc, doc, updateDoc, setDoc, serverTimestamp, Timestamp,
+  collection, getDocs, getDoc, doc, updateDoc, setDoc, deleteDoc, serverTimestamp, Timestamp,
   query, orderBy,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { formatDate, formatDateTime } from '@/lib/dates'
-import type { Merchant, Subscription, SupportTicket } from '@/types'
+import type { Merchant, Subscription, SupportTicket, UserProfile, Campaign } from '@/types'
 
-type Tab = 'merchants' | 'pricing' | 'support'
+type Tab = 'merchants' | 'pricing' | 'support' | 'users'
 
-// ─── Fiyat planları varsayılan tanımı ────────────────────────────────────────
-const DEFAULT_PLANS = [
-  { id: 'trial',    label: 'Deneme',   price: 0,   maxCustomers: 50,   maxTx: 200,   maxCamp: 1,  features: ['50 müşteri', '200 işlem/ay', '1 kampanya'], isPopular: false },
-  { id: 'mini',     label: 'Mini',     price: 99,  maxCustomers: 200,  maxTx: 500,   maxCamp: 2,  features: ['200 müşteri', '500 işlem/ay', '2 kampanya'], isPopular: false },
-  { id: 'standard', label: 'Standart', price: 199, maxCustomers: 1000, maxTx: 3000,  maxCamp: 5,  features: ['1000 müşteri', '3000 işlem/ay', '5 kampanya'], isPopular: true },
-  { id: 'pro',      label: 'Pro',      price: 399, maxCustomers: -1,   maxTx: -1,    maxCamp: -1, features: ['Sınırsız müşteri', 'Sınırsız işlem', 'Sınırsız kampanya'], isPopular: false },
+// ─── Plan tanımları (label, limitler) ────────────────────────────────────────
+const PLAN_META = [
+  {
+    id: 'trial', label: 'Deneme (Trial)', defaultMonthly: 0, defaultYearly: 0,
+    defaultMaxCustomers: 50, defaultMaxTx: 200, defaultMaxCampaigns: 1,
+    features: ['50 müşteri', '200 işlem/ay', '1 kampanya', 'QR + Telefon arama', '14 gün ücretsiz'],
+  },
+  {
+    id: 'mini', label: 'Mini', defaultMonthly: 99, defaultYearly: 79,
+    defaultMaxCustomers: 200, defaultMaxTx: 500, defaultMaxCampaigns: 2,
+    features: ['200 müşteri', '500 işlem/ay', '2 kampanya', 'E-posta destek', '❌ QR/Telefon arama yok'],
+  },
+  {
+    id: 'standard', label: 'Standart', defaultMonthly: 199, defaultYearly: 159,
+    defaultMaxCustomers: 1000, defaultMaxTx: 3000, defaultMaxCampaigns: 5,
+    features: ['1.000 müşteri', '3.000 işlem/ay', '5 kampanya', 'QR + Telefon arama', 'Öncelikli destek'],
+    isPopular: true,
+  },
+  {
+    id: 'pro', label: 'Pro', defaultMonthly: 399, defaultYearly: 319,
+    defaultMaxCustomers: -1, defaultMaxTx: -1, defaultMaxCampaigns: -1,
+    features: ['Sınırsız müşteri', 'Sınırsız işlem', 'Sınırsız kampanya', 'QR + Telefon arama', '7/24 destek', 'Gelişmiş analitik'],
+  },
 ]
 
-// ─── Yardımcı bileşen: Sekme butonu ─────────────────────────────────────────
+type PlanData = {
+  id: string; label: string; isPopular?: boolean
+  monthlyPrice: number; yearlyPrice: number
+  shopierMonthlyUrl: string; shopierYearlyUrl: string
+  features: string[]
+  maxCustomers: number; maxMonthlyTransactions: number; maxCampaigns: number
+}
+
 function TabBtn({ tab, active, label, badge, onClick }: { tab: Tab; active: Tab; label: string; badge?: number; onClick: (t: Tab) => void }) {
   return (
     <button onClick={() => onClick(tab)}
@@ -33,46 +57,388 @@ function TabBtn({ tab, active, label, badge, onClick }: { tab: Tab; active: Tab;
   )
 }
 
-// ─── Ana sayfa ────────────────────────────────────────────────────────────────
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('merchants')
   const [openTickets, setOpenTickets] = useState(0)
+  const [pendingApps, setPendingApps] = useState(0)
 
   useEffect(() => {
     getDocs(query(collection(db, 'supportTickets'), orderBy('createdAt', 'desc')))
       .then((snap) => setOpenTickets(snap.docs.filter((d) => d.data()['status'] === 'open').length))
       .catch(console.error)
+    // badge: son 7 günde kayıt olan kullanıcı sayısı
+    getDocs(collection(db, 'users'))
+      .then((snap) => {
+        const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
+        setPendingApps(snap.docs.filter((d) => {
+          const ts = d.data()['createdAt']
+          return ts && ts.toMillis && ts.toMillis() > weekAgo
+        }).length)
+      })
+      .catch(console.error)
   }, [])
 
   return (
     <div className="space-y-5">
-      {/* Sekmeler */}
       <div className="bg-white rounded-2xl border border-gray-200 p-1 flex gap-1">
         <TabBtn tab="merchants" active={tab} label="İşletmeler" onClick={setTab} />
+        <TabBtn tab="users" active={tab} label="Üyeler" badge={pendingApps} onClick={setTab} />
         <TabBtn tab="pricing" active={tab} label="Fiyatlandırma" onClick={setTab} />
         <TabBtn tab="support" active={tab} label="Destek" badge={openTickets} onClick={setTab} />
       </div>
 
       {tab === 'merchants' && <MerchantsTab />}
+      {tab === 'users' && <UsersTab onCountChange={setPendingApps} />}
       {tab === 'pricing' && <PricingTab />}
       {tab === 'support' && <SupportTab onCountChange={setOpenTickets} />}
     </div>
   )
 }
 
-// ─── 1. İşletmeler Sekmesi ───────────────────────────────────────────────────
+// ─── 0. Üyeler ───────────────────────────────────────────────────────────────
+type AppUser = UserProfile & { id: string }
+type UserRow = AppUser & { subscription?: Subscription }
+
+function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const snap = await getDocs(collection(db, 'users'))
+      const adminUids = (import.meta.env.VITE_ADMIN_UIDS ?? '').split(',').filter(Boolean)
+      const all = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as AppUser))
+        .filter((u) => !adminUids.includes(u.id))
+
+      // Her kullanıcı için varsa aboneliği çek
+      const withSubs = await Promise.all(all.map(async (u): Promise<UserRow> => {
+        if (!u.merchantId) return u
+        try {
+          const subSnap = await getDoc(doc(db, 'merchants', u.merchantId, 'subscription', 'current'))
+          return { ...u, subscription: subSnap.exists() ? (subSnap.data() as Subscription) : undefined }
+        } catch { return u }
+      }))
+
+      // En yeni kayıt üste
+      const sorted = withSubs.sort((a, b) => {
+        const ta = a.createdAt?.toMillis?.() ?? 0
+        const tb = b.createdAt?.toMillis?.() ?? 0
+        return tb - ta
+      })
+      setUsers(sorted)
+
+      // Badge: son 7 günde kayıt
+      const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
+      onCountChange(sorted.filter((u) => (u.createdAt?.toMillis?.() ?? 0) > weekAgo).length)
+    } catch (err) { console.error(err) }
+    finally { setLoading(false) }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [])
+
+  async function deleteUser(u: UserRow) {
+    if (!confirm(`"${u.displayName}" kullanıcısını silmek istediğinize emin misiniz?\nBu işlem geri alınamaz.`)) return
+    setDeletingId(u.id)
+    try {
+      await deleteDoc(doc(db, 'users', u.id))
+      toast.success('Kullanıcı silindi')
+      setUsers((prev) => prev.filter((x) => x.id !== u.id))
+    } catch (err) { console.error(err); toast.error('Silinemedi') }
+    finally { setDeletingId(null) }
+  }
+
+  const filtered = users.filter((u) => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return !!(u.displayName?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q))
+  })
+
+  if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-20 bg-gray-200 rounded-xl" />)}</div>
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">{users.length} kullanıcı</p>
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40" />
+      </div>
+
+      <div className="space-y-2">
+        {filtered.map((u) => {
+          const sub = u.subscription
+          const msLeft = sub ? sub.currentPeriodEnd.toDate().getTime() - Date.now() : null
+          const daysLeft = msLeft !== null ? Math.ceil(msLeft / 86_400_000) : null
+          const isExpired = msLeft !== null && msLeft <= 0
+          const isNew = (u.createdAt?.toMillis?.() ?? 0) > Date.now() - 7 * 24 * 3600 * 1000
+
+          return (
+            <div key={u.id} className="bg-white rounded-xl border border-gray-100 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-gray-900 text-sm">{u.displayName ?? <span className="text-gray-400 font-normal">—</span>}</p>
+                    {isNew && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Yeni</span>}
+                  </div>
+                  <p className="text-xs text-gray-400 truncate">{u.email ?? <span className="italic">e-posta yok</span>}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Kayıt: {u.createdAt ? formatDateTime(u.createdAt) : '—'}
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <button
+                    disabled={deletingId === u.id}
+                    onClick={() => void deleteUser(u)}
+                    className="text-xs text-red-400 hover:text-red-600 disabled:opacity-40 px-1.5 py-0.5 rounded hover:bg-red-50 transition-colors"
+                    title="Kullanıcıyı sil"
+                  >
+                    {deletingId === u.id ? '…' : '🗑'}
+                  </button>
+                  {/* Kullanıcı durumu */}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    u.status === 'approved' ? 'bg-green-100 text-green-700' :
+                    u.status === 'rejected' ? 'bg-red-100 text-red-600' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>
+                    {u.status === 'approved' ? 'Aktif' : u.status === 'rejected' ? 'Reddedildi' : 'Bekliyor'}
+                  </span>
+
+                  {/* İşletme / abonelik durumu */}
+                  {u.merchantId ? (
+                    sub ? (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        isExpired ? 'bg-red-100 text-red-600' :
+                        sub.status === 'trialing' ? 'bg-violet-100 text-violet-700' :
+                        sub.status === 'active' ? 'bg-indigo-100 text-indigo-700' :
+                        'bg-gray-100 text-gray-500'
+                      }`}>
+                        {sub.status === 'trialing'
+                          ? (isExpired ? 'Deneme Bitti' : `Deneme · ${daysLeft}g`)
+                          : sub.status === 'active'
+                          ? `${sub.plan === 'mini' ? 'Mini' : sub.plan === 'standard' ? 'Standart' : 'Pro'} · Aktif`
+                          : sub.status === 'canceled' ? 'İptal' : 'Gecikmiş'}
+                      </span>
+                    ) : (
+                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">İşletme var</span>
+                    )
+                  ) : (
+                    <span className="text-xs bg-gray-50 text-gray-400 px-2 py-0.5 rounded-full border border-gray-200">Onboarding bekliyor</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── 1. İşletmeler ───────────────────────────────────────────────────────────
 type MerchantRow = Merchant & { subscription?: Subscription }
+type CampaignRow = Campaign & { id: string }
+
+const PLAN_LABEL: Record<string, string> = { trial: 'Deneme', mini: 'Mini', standard: 'Standart', pro: 'Pro' }
+const SUB_STATUS_LABEL: Record<string, string> = { active: 'Aktif', trialing: 'Deneme', canceled: 'İptal', past_due: 'Gecikmiş' }
+
+// Açılır detay paneli — owner email + kampanyalar
+function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusChange }: {
+  merchant: MerchantRow
+  subscription?: Subscription
+  onPlanChange: (plan: string, cycle: 'monthly' | 'yearly' | null) => Promise<void>
+  onStatusChange: (status: 'active' | 'passive') => Promise<void>
+}) {
+  const [ownerEmail, setOwnerEmail] = useState<string | null>(null)
+  const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
+  const [loadingDetail, setLoadingDetail] = useState(true)
+  const [actionId, setActionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoadingDetail(true)
+    Promise.all([
+      getDoc(doc(db, 'users', merchant.ownerId)).then((s) => {
+        setOwnerEmail(s.exists() ? (s.data() as UserProfile).email : null)
+      }).catch(console.error),
+      getDocs(collection(db, 'merchants', merchant.id, 'campaigns')).then((s) => {
+        setCampaigns(s.docs.map((d) => ({ id: d.id, ...d.data() } as CampaignRow)))
+      }).catch(console.error),
+    ]).finally(() => setLoadingDetail(false))
+  }, [merchant.id, merchant.ownerId])
+
+  async function toggleCampaign(c: CampaignRow) {
+    setActionId(c.id)
+    try {
+      const next = c.status === 'active' ? 'passive' : 'active'
+      await updateDoc(doc(db, 'merchants', merchant.id, 'campaigns', c.id), { status: next, updatedAt: serverTimestamp() })
+      setCampaigns((prev) => prev.map((x) => x.id === c.id ? { ...x, status: next } : x))
+    } catch (err) { console.error(err); toast.error('İşlem başarısız') }
+    finally { setActionId(null) }
+  }
+
+  async function deleteCampaign(c: CampaignRow) {
+    if (!confirm(`"${c.name}" kampanyasını silmek istediğinize emin misiniz?`)) return
+    setActionId(c.id + 'del')
+    try {
+      await deleteDoc(doc(db, 'merchants', merchant.id, 'campaigns', c.id))
+      setCampaigns((prev) => prev.filter((x) => x.id !== c.id))
+      toast.success('Kampanya silindi')
+    } catch (err) { console.error(err); toast.error('Silinemedi') }
+    finally { setActionId(null) }
+  }
+
+  const sub = subscription
+
+  return (
+    <div className="border-t border-gray-100 pt-3 space-y-4">
+
+      {/* İşletme bilgileri */}
+      {loadingDetail ? (
+        <div className="h-20 bg-gray-100 rounded-lg animate-pulse" />
+      ) : (
+        <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+          {ownerEmail && (
+            <div className="col-span-2 flex items-center gap-1.5 text-gray-700">
+              <span>✉️</span>
+              <a href={`mailto:${ownerEmail}`} className="hover:underline truncate">{ownerEmail}</a>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-gray-600"><span>📞</span>{merchant.phone}</div>
+          <div className="flex items-center gap-1.5 text-gray-600"><span>🏪</span>{merchant.sector}</div>
+          <div className="flex items-center gap-1.5 text-gray-600 col-span-2"><span>📍</span>{merchant.city}, {merchant.district}</div>
+          <div className="flex items-center gap-1.5 text-gray-600 col-span-2">
+            <span>🔗</span>
+            <a href={`/m/${merchant.slug}`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
+              /m/{merchant.slug}
+            </a>
+          </div>
+          {merchant.instagram && (
+            <div className="flex items-center gap-1.5 text-gray-600 col-span-2">
+              <span>📷</span>
+              <a href={`https://instagram.com/${merchant.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                @{merchant.instagram.replace(/^@/, '')}
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Abonelik detayı */}
+      {sub && (
+        <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 text-xs space-y-1">
+          <p className="font-semibold text-violet-800 mb-1.5">Abonelik</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600">
+            <div className="flex justify-between col-span-2">
+              <span>Plan</span>
+              <span className="font-medium text-gray-800">
+                {PLAN_LABEL[sub.plan] ?? sub.plan}
+                {sub.billingCycle ? ` · ${sub.billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'}` : ''}
+              </span>
+            </div>
+            <div className="flex justify-between col-span-2">
+              <span>Durum</span>
+              <span className="font-medium text-gray-800">{SUB_STATUS_LABEL[sub.status] ?? sub.status}</span>
+            </div>
+            <div className="flex justify-between col-span-2">
+              <span>Başlangıç</span>
+              <span className="font-medium text-gray-800">{formatDate(sub.currentPeriodStart)}</span>
+            </div>
+            <div className="flex justify-between col-span-2">
+              <span>Bitiş</span>
+              <span className={`font-medium ${sub.currentPeriodEnd.toDate() < new Date() ? 'text-red-600' : 'text-gray-800'}`}>
+                {formatDate(sub.currentPeriodEnd)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan değiştir */}
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Plan Değiştir</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button disabled={!!actionId || sub?.plan === 'trial'}
+            onClick={() => void onPlanChange('trial', null)}
+            className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors disabled:opacity-40 ${sub?.plan === 'trial' ? 'bg-amber-100 border-amber-300 text-amber-700 font-medium' : 'border-gray-200 hover:bg-amber-50 hover:border-amber-300'}`}>
+            Deneme (14g)
+          </button>
+          {(['mini','standard','pro'] as const).map((p) => (
+            <div key={p} className="flex gap-0.5">
+              <button disabled={!!actionId}
+                onClick={() => void onPlanChange(p, 'monthly')}
+                className={`text-xs px-2 py-1.5 rounded-l-lg border transition-colors disabled:opacity-40 ${sub?.plan === p && sub?.billingCycle === 'monthly' ? 'bg-indigo-100 border-indigo-300 text-indigo-700 font-medium' : 'border-gray-200 hover:bg-indigo-50 hover:border-indigo-300'}`}>
+                {p}/ay
+              </button>
+              <button disabled={!!actionId}
+                onClick={() => void onPlanChange(p, 'yearly')}
+                className={`text-xs px-2 py-1.5 rounded-r-lg border-t border-r border-b transition-colors disabled:opacity-40 ${sub?.plan === p && sub?.billingCycle === 'yearly' ? 'bg-violet-100 border-violet-300 text-violet-700 font-medium' : 'border-gray-200 hover:bg-violet-50 hover:border-violet-300'}`}>
+                /yıl
+              </button>
+            </div>
+          ))}
+        </div>
+        <button disabled={!!actionId}
+          onClick={() => void onStatusChange(merchant.status === 'active' ? 'passive' : 'active')}
+          className={`text-xs px-3 py-1.5 rounded-lg border disabled:opacity-40 ${merchant.status === 'active' ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
+          {merchant.status === 'active' ? 'İşletmeyi Pasife Al' : 'İşletmeyi Aktif Et'}
+        </button>
+      </div>
+
+      {/* Kampanyalar */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+          Kampanyalar ({campaigns.length})
+        </p>
+        {loadingDetail ? (
+          <div className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+        ) : campaigns.length === 0 ? (
+          <p className="text-xs text-gray-400 py-2">Henüz kampanya yok</p>
+        ) : (
+          <div className="space-y-1.5">
+            {campaigns.map((c) => (
+              <div key={c.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400">
+                    {c.type === 'stamp' ? 'Damga' : 'Puan'} · {c.requiredStamps} hedef
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  <button
+                    disabled={actionId === c.id}
+                    onClick={() => void toggleCampaign(c)}
+                    className={`text-xs px-2 py-1 rounded border transition-colors disabled:opacity-40 ${c.status === 'active' ? 'border-gray-200 text-gray-500 hover:bg-gray-100' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
+                    {c.status === 'active' ? 'Pasife Al' : 'Aktif Et'}
+                  </button>
+                  <button
+                    disabled={actionId === c.id + 'del'}
+                    onClick={() => void deleteCampaign(c)}
+                    className="text-xs px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40">
+                    Sil
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function MerchantsTab() {
   const [merchants, setMerchants] = useState<MerchantRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [actionId, setActionId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   async function load() {
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
       const snap = await getDocs(collection(db, 'merchants'))
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MerchantRow))
@@ -84,46 +450,40 @@ function MerchantsTab() {
       }))
       setMerchants(withSubs)
     } catch (err) {
-      console.error(err)
       const msg = err instanceof Error ? err.message : String(err)
       const isPermission = msg.includes('permission') || msg.includes('insufficient')
-      setError(
-        isPermission
-          ? 'İzin reddedildi. Firestore kurallarını deploy edin: firebase deploy --only firestore:rules'
-          : 'İşletmeler yüklenemedi. Sayfayı yenileyin veya konsolu kontrol edin.'
-      )
-    } finally {
-      setLoading(false)
-    }
+      setError(isPermission
+        ? 'İzin reddedildi. Firestore kurallarını deploy edin: firebase deploy --only firestore:rules'
+        : 'İşletmeler yüklenemedi. Sayfayı yenileyin veya konsolu kontrol edin.')
+    } finally { setLoading(false) }
   }
 
   useEffect(() => { void load() }, [])
 
-  async function setPlan(merchantId: string, plan: string) {
-    setActionId(merchantId)
+  async function setPlan(merchantId: string, plan: string, billingCycle: 'monthly' | 'yearly' | null = null) {
     try {
       const subRef = doc(db, 'merchants', merchantId, 'subscription', 'current')
       const now = Timestamp.now()
+      const days = plan === 'trial' ? 14 : billingCycle === 'yearly' ? 365 : 30
       await setDoc(subRef, {
-        plan, status: 'active',
+        plan,
+        status: plan === 'trial' ? 'trialing' : 'active',
+        billingCycle: billingCycle ?? null,
         currentPeriodStart: now,
-        currentPeriodEnd: Timestamp.fromMillis(now.toMillis() + 30 * 24 * 3600 * 1000),
+        currentPeriodEnd: Timestamp.fromMillis(now.toMillis() + days * 24 * 3600 * 1000),
         updatedAt: serverTimestamp(),
       }, { merge: true })
-      toast.success('Plan güncellendi')
+      toast.success(`Plan güncellendi: ${plan}${billingCycle ? ` (${billingCycle === 'yearly' ? 'yıllık' : 'aylık'})` : ''}`)
       await load()
     } catch (err) { console.error(err); toast.error('Güncelleme başarısız') }
-    finally { setActionId(null) }
   }
 
   async function setStatus(merchantId: string, status: 'active' | 'passive') {
-    setActionId(merchantId + status)
     try {
       await updateDoc(doc(db, 'merchants', merchantId), { status, updatedAt: serverTimestamp() })
       toast.success(`İşletme ${status === 'active' ? 'aktif' : 'pasif'} edildi`)
       await load()
     } catch (err) { console.error(err); toast.error('İşlem başarısız') }
-    finally { setActionId(null) }
   }
 
   const filtered = merchants.filter((m) =>
@@ -132,7 +492,7 @@ function MerchantsTab() {
     m.sector.toLowerCase().includes(search.toLowerCase())
   )
 
-  if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-32 bg-gray-200 rounded-xl" />)}</div>
+  if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-20 bg-gray-200 rounded-xl" />)}</div>
 
   if (error) return (
     <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center space-y-3">
@@ -152,128 +512,337 @@ function MerchantsTab() {
           placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40" />
       </div>
 
-      <div className="space-y-3">
-        {filtered.map((m) => (
-          <div key={m.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="font-semibold text-gray-900">{m.name}</p>
-                <p className="text-xs text-gray-400">{m.sector} · {m.city}, {m.district}</p>
-                <p className="text-xs text-gray-400">/m/{m.slug}</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className={`text-xs px-2 py-0.5 rounded-full ${m.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {m.status === 'active' ? 'Aktif' : 'Pasif'}
-                </span>
-                <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                  {m.subscription?.plan ?? 'trial'}
-                </span>
-              </div>
-            </div>
+      <div className="space-y-2">
+        {filtered.map((m) => {
+          const sub = m.subscription
+          const msLeft = sub ? sub.currentPeriodEnd.toDate().getTime() - Date.now() : null
+          const daysLeft = msLeft !== null ? Math.ceil(msLeft / 86_400_000) : null
+          const expired = msLeft !== null && msLeft <= 0
+          const isExpanded = expandedId === m.id
 
-            {m.subscription && (
-              <p className="text-xs text-gray-400">
-                Dönem: {formatDate(m.subscription.currentPeriodStart)} – {formatDate(m.subscription.currentPeriodEnd)}
-                {' · '}{m.subscription.status}
-              </p>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              {(['trial','mini','standard','pro'] as const).map((p) => (
-                <button key={p}
-                  disabled={!!actionId || m.subscription?.plan === p}
-                  onClick={() => void setPlan(m.id, p)}
-                  className={`text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-40 ${m.subscription?.plan === p ? 'bg-indigo-100 border-indigo-300 text-indigo-700 font-medium' : 'border-gray-200 hover:bg-indigo-50 hover:border-indigo-300'}`}>
-                  {p}
-                </button>
-              ))}
+          return (
+            <div key={m.id} className={`bg-white rounded-xl border transition-colors ${isExpanded ? 'border-indigo-200' : 'border-gray-100'}`}>
+              {/* Özet satırı — tıklanınca açılır */}
               <button
-                disabled={!!actionId}
-                onClick={() => void setStatus(m.id, m.status === 'active' ? 'passive' : 'active')}
-                className={`text-xs px-3 py-1.5 rounded-lg border disabled:opacity-40 ${m.status === 'active' ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
-                {m.status === 'active' ? 'Pasife Al' : 'Aktif Et'}
+                className="w-full text-left p-4"
+                onClick={() => setExpandedId(isExpanded ? null : m.id)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-gray-900 text-sm">{m.name}</p>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${m.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {m.status === 'active' ? 'Aktif' : 'Pasif'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">{m.sector} · {m.city}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    {sub ? (
+                      <>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          expired ? 'bg-red-100 text-red-700' :
+                          sub.status === 'trialing' ? 'bg-violet-100 text-violet-700' :
+                          'bg-indigo-100 text-indigo-700'
+                        }`}>
+                          {PLAN_LABEL[sub.plan] ?? sub.plan}
+                          {sub.billingCycle === 'yearly' ? '/yıl' : sub.billingCycle === 'monthly' ? '/ay' : ''}
+                        </span>
+                        <span className={`text-xs ${expired ? 'text-red-500 font-semibold' : daysLeft !== null && daysLeft <= 3 ? 'text-orange-500' : 'text-gray-400'}`}>
+                          {expired ? '⚠ Bitti' : `${daysLeft}g kaldı`}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs text-gray-400">Abonelik yok</span>
+                    )}
+                    <span className="text-gray-300 text-xs mt-0.5">{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+                </div>
               </button>
+
+              {/* Detay paneli */}
+              {isExpanded && (
+                <div className="px-4 pb-4">
+                  <MerchantDetailPanel
+                    merchant={m}
+                    subscription={m.subscription}
+                    onPlanChange={async (plan, cycle) => {
+                      await setPlan(m.id, plan, cycle)
+                    }}
+                    onStatusChange={async (status) => {
+                      await setStatus(m.id, status)
+                    }}
+                  />
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
 }
 
-// ─── 2. Fiyatlandırma Sekmesi ─────────────────────────────────────────────────
+// ─── 2. Fiyatlandırma ─────────────────────────────────────────────────────────
 function PricingTab() {
-  const [plans, setPlans] = useState(DEFAULT_PLANS)
+  const [plans, setPlans] = useState<PlanData[]>(
+    PLAN_META.map((p) => ({
+      ...p,
+      monthlyPrice: p.defaultMonthly,
+      yearlyPrice: p.defaultYearly,
+      shopierMonthlyUrl: '',
+      shopierYearlyUrl: '',
+      maxCustomers: p.defaultMaxCustomers,
+      maxMonthlyTransactions: p.defaultMaxTx,
+      maxCampaigns: p.defaultMaxCampaigns,
+    }))
+  )
   const [editing, setEditing] = useState<string | null>(null)
-  const [tempPrice, setTempPrice] = useState('')
+  const [draft, setDraft] = useState<Partial<PlanData>>({})
   const [saving, setSaving] = useState(false)
-
-  async function savePrice(planId: string) {
-    const price = parseInt(tempPrice)
-    if (isNaN(price) || price < 0) { toast.error('Geçersiz fiyat'); return }
-    setSaving(true)
-    try {
-      await setDoc(doc(db, 'config', 'pricing'), {
-        [planId]: { price, updatedAt: serverTimestamp() }
-      }, { merge: true })
-      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, price } : p))
-      toast.success('Fiyat güncellendi')
-      setEditing(null)
-    } catch (err) { console.error(err); toast.error('Güncelleme başarısız') }
-    finally { setSaving(false) }
-  }
 
   useEffect(() => {
     getDoc(doc(db, 'config', 'pricing')).then((snap) => {
       if (!snap.exists()) return
       const data = snap.data()
       setPlans((prev) => prev.map((p) => {
-        const d = data[p.id] as { price?: number } | undefined
-        return d?.price != null ? { ...p, price: d.price } : p
+        const d = data[p.id] as Partial<PlanData> | undefined
+        if (!d) return p
+        return {
+          ...p,
+          monthlyPrice: d.monthlyPrice ?? p.monthlyPrice,
+          yearlyPrice: d.yearlyPrice ?? p.yearlyPrice,
+          shopierMonthlyUrl: d.shopierMonthlyUrl ?? '',
+          shopierYearlyUrl: d.shopierYearlyUrl ?? '',
+          maxCustomers: d.maxCustomers ?? p.maxCustomers,
+          maxMonthlyTransactions: d.maxMonthlyTransactions ?? p.maxMonthlyTransactions,
+          maxCampaigns: d.maxCampaigns ?? p.maxCampaigns,
+        }
       }))
     }).catch(console.error)
   }, [])
 
+  function startEdit(plan: PlanData) {
+    setEditing(plan.id)
+    setDraft({
+      monthlyPrice: plan.monthlyPrice,
+      yearlyPrice: plan.yearlyPrice,
+      shopierMonthlyUrl: plan.shopierMonthlyUrl,
+      shopierYearlyUrl: plan.shopierYearlyUrl,
+      maxCustomers: plan.maxCustomers,
+      maxMonthlyTransactions: plan.maxMonthlyTransactions,
+      maxCampaigns: plan.maxCampaigns,
+    })
+  }
+
+  async function savePlan(planId: string) {
+    const monthlyPrice = Number(draft.monthlyPrice)
+    const yearlyPrice = Number(draft.yearlyPrice)
+    const maxCustomers = Number(draft.maxCustomers)
+    const maxMonthlyTransactions = Number(draft.maxMonthlyTransactions)
+    const maxCampaigns = Number(draft.maxCampaigns)
+    if (isNaN(monthlyPrice) || monthlyPrice < 0) { toast.error('Geçersiz aylık fiyat'); return }
+    if (isNaN(yearlyPrice) || yearlyPrice < 0) { toast.error('Geçersiz yıllık fiyat'); return }
+
+    setSaving(true)
+    try {
+      await setDoc(doc(db, 'config', 'pricing'), {
+        [planId]: {
+          monthlyPrice,
+          yearlyPrice,
+          shopierMonthlyUrl: draft.shopierMonthlyUrl ?? '',
+          shopierYearlyUrl: draft.shopierYearlyUrl ?? '',
+          maxCustomers: isNaN(maxCustomers) ? null : maxCustomers,
+          maxMonthlyTransactions: isNaN(maxMonthlyTransactions) ? null : maxMonthlyTransactions,
+          maxCampaigns: isNaN(maxCampaigns) ? null : maxCampaigns,
+          updatedAt: serverTimestamp(),
+        },
+      }, { merge: true })
+
+      setPlans((prev) => prev.map((p) => p.id === planId
+        ? { ...p, monthlyPrice, yearlyPrice, shopierMonthlyUrl: draft.shopierMonthlyUrl ?? '', shopierYearlyUrl: draft.shopierYearlyUrl ?? '', maxCustomers, maxMonthlyTransactions, maxCampaigns }
+        : p
+      ))
+      toast.success('Plan güncellendi')
+      setEditing(null)
+    } catch (err) { console.error(err); toast.error('Güncelleme başarısız') }
+    finally { setSaving(false) }
+  }
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-gray-500">Fiyatları buradan güncelleyebilirsiniz. Mevcut abonelikler etkilenmez.</p>
-      <div className="space-y-3">
+    <div className="space-y-5">
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 space-y-1">
+        <p className="font-semibold">Shopier entegrasyonu</p>
+        <p>Her plan için aylık ve yıllık ödeme linklerini buraya girin. Linkler anasayfadaki fiyatlandırma bölümünde otomatik aktif olur.</p>
+      </div>
+
+      <div className="space-y-4">
         {plans.map((plan) => (
-          <div key={plan.id} className={`bg-white rounded-xl border p-4 space-y-3 ${plan.isPopular ? 'border-indigo-300' : 'border-gray-100'}`}>
+          <div key={plan.id} className={`bg-white rounded-xl border p-5 space-y-4 ${plan.isPopular ? 'border-indigo-300' : 'border-gray-200'}`}>
+            {/* Plan başlığı */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <p className="font-semibold text-gray-900">{plan.label}</p>
-                {plan.isPopular && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Popüler</span>}
+                <p className="font-bold text-gray-900 text-base">{plan.label}</p>
+                {plan.isPopular && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">Popüler</span>}
               </div>
-              {editing === plan.id ? (
-                <div className="flex items-center gap-2">
-                  <input type="number" value={tempPrice} onChange={(e) => setTempPrice(e.target.value)}
-                    className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    min={0} />
-                  <span className="text-sm text-gray-500">TL/ay</span>
-                  <button onClick={() => void savePrice(plan.id)} disabled={saving}
-                    className="text-xs bg-indigo-600 text-white px-2 py-1 rounded-lg disabled:opacity-50">
-                    {saving ? '…' : 'Kaydet'}
-                  </button>
-                  <button onClick={() => setEditing(null)} className="text-xs text-gray-400">İptal</button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <p className="font-bold text-gray-900">{plan.price === 0 ? 'Ücretsiz' : `${plan.price} TL/ay`}</p>
-                  <button onClick={() => { setEditing(plan.id); setTempPrice(String(plan.price)) }}
-                    className="text-xs text-indigo-600 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50">
-                    Düzenle
-                  </button>
-                </div>
+              {editing !== plan.id && (
+                <button
+                  onClick={() => startEdit(plan)}
+                  className="text-xs text-indigo-600 border border-indigo-200 px-3 py-1.5 rounded-lg hover:bg-indigo-50 font-medium">
+                  Düzenle
+                </button>
               )}
             </div>
-            <ul className="space-y-1">
-              {plan.features.map((f) => (
-                <li key={f} className="text-xs text-gray-500 flex items-center gap-1.5">
-                  <span className="text-green-500">✓</span> {f}
-                </li>
-              ))}
-            </ul>
+
+            {editing === plan.id ? (
+              /* Düzenleme formu */
+              <div className="space-y-4 border-t border-gray-100 pt-4">
+                {plan.id !== 'trial' && (
+                  <>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Fiyatlar</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Aylık Fiyat (TL)</label>
+                        <input
+                          type="number" min={0}
+                          value={draft.monthlyPrice ?? ''}
+                          onChange={(e) => setDraft((d) => ({ ...d, monthlyPrice: Number(e.target.value) }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Yıllık Fiyat (TL/ay)</label>
+                        <input
+                          type="number" min={0}
+                          value={draft.yearlyPrice ?? ''}
+                          onChange={(e) => setDraft((d) => ({ ...d, yearlyPrice: Number(e.target.value) }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <p className="text-xs text-gray-400 mt-0.5">Yıllık ödemede aylık fiyat</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Limitler</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Müşteri</label>
+                    <input
+                      type="number" min={-1}
+                      value={draft.maxCustomers ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, maxCustomers: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="-1=∞"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">İşlem/ay</label>
+                    <input
+                      type="number" min={-1}
+                      value={draft.maxMonthlyTransactions ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, maxMonthlyTransactions: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="-1=∞"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Kampanya</label>
+                    <input
+                      type="number" min={-1}
+                      value={draft.maxCampaigns ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, maxCampaigns: Number(e.target.value) }))}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="-1=∞"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400">-1 girin = Sınırsız</p>
+
+                {plan.id !== 'trial' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Shopier — Aylık Ödeme Linki</label>
+                      <input
+                        type="url"
+                        value={draft.shopierMonthlyUrl ?? ''}
+                        onChange={(e) => setDraft((d) => ({ ...d, shopierMonthlyUrl: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="https://shopier.com/..."
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Shopier — Yıllık Ödeme Linki</label>
+                      <input
+                        type="url"
+                        value={draft.shopierYearlyUrl ?? ''}
+                        onChange={(e) => setDraft((d) => ({ ...d, shopierYearlyUrl: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="https://shopier.com/..."
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button onClick={() => void savePlan(plan.id)} disabled={saving}
+                    className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50">
+                    {saving ? 'Kaydediliyor…' : 'Kaydet'}
+                  </button>
+                  <button onClick={() => setEditing(null)} className="bg-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-medium">
+                    İptal
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Görüntüleme */
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                {plan.id === 'trial' ? (
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-700">
+                    Ücretsiz deneme paketi · 14 gün · Ödeme alınmaz
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Aylık</p>
+                      <p className="font-bold text-gray-900">₺{plan.monthlyPrice}<span className="text-gray-400 font-normal text-xs">/ay</span></p>
+                      {plan.shopierMonthlyUrl ? (
+                        <a href={plan.shopierMonthlyUrl} target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:underline truncate block mt-0.5">
+                          Shopier linki ✓
+                        </a>
+                      ) : (
+                        <p className="text-xs text-gray-300 mt-0.5">Link girilmedi</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Yıllık (ay başına)</p>
+                      <p className="font-bold text-gray-900">₺{plan.yearlyPrice}<span className="text-gray-400 font-normal text-xs">/ay</span></p>
+                      {plan.shopierYearlyUrl ? (
+                        <a href={plan.shopierYearlyUrl} target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:underline truncate block mt-0.5">
+                          Shopier linki ✓
+                        </a>
+                      ) : (
+                        <p className="text-xs text-gray-300 mt-0.5">Link girilmedi</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-3 text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                  <span>👥 {plan.maxCustomers === -1 ? '∞' : plan.maxCustomers} müşteri</span>
+                  <span>·</span>
+                  <span>📋 {plan.maxMonthlyTransactions === -1 ? '∞' : plan.maxMonthlyTransactions} işlem/ay</span>
+                  <span>·</span>
+                  <span>🎯 {plan.maxCampaigns === -1 ? '∞' : plan.maxCampaigns} kampanya</span>
+                </div>
+                <ul className="flex flex-wrap gap-1.5 pt-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="text-xs bg-gray-50 text-gray-500 px-2 py-0.5 rounded-full border border-gray-100">{f}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -281,9 +850,24 @@ function PricingTab() {
   )
 }
 
-// ─── 3. Destek Sekmesi ────────────────────────────────────────────────────────
+// ─── 3. Destek ────────────────────────────────────────────────────────────────
+type MerchantDetails = {
+  phone: string
+  sector: string
+  city: string
+  district: string
+  plan: string
+  planStatus?: string
+  instagram?: string | null
+}
+
+const PLAN_LABELS: Record<string, string> = {
+  trial: 'Deneme', mini: 'Mini', standard: 'Standart', pro: 'Pro',
+}
+
 function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
   const [tickets, setTickets] = useState<SupportTicket[]>([])
+  const [merchantMap, setMerchantMap] = useState<Map<string, MerchantDetails>>(new Map())
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('open')
   const [replyingId, setReplyingId] = useState<string | null>(null)
@@ -297,10 +881,39 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
       const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as SupportTicket))
       setTickets(all)
       onCountChange(all.filter((t) => t.status === 'open').length)
+
+      // Unique merchantId'lere ait firma + abonelik verisi
+      const uniqueIds = [...new Set(all.map((t) => t.merchantId).filter(Boolean))]
+      const entries = await Promise.all(
+        uniqueIds.map(async (mid): Promise<[string, MerchantDetails | null]> => {
+          try {
+            const [mSnap, subSnap] = await Promise.all([
+              getDoc(doc(db, 'merchants', mid)),
+              getDoc(doc(db, 'merchants', mid, 'subscription', 'current')),
+            ])
+            if (!mSnap.exists()) return [mid, null]
+            const m = mSnap.data() as Merchant
+            const sub = subSnap.exists() ? (subSnap.data() as Subscription) : null
+            return [mid, {
+              phone: m.phone,
+              sector: m.sector,
+              city: m.city,
+              district: m.district,
+              plan: sub?.plan ?? 'trial',
+              planStatus: sub?.status,
+              instagram: m.instagram ?? null,
+            }]
+          } catch { return [mid, null] }
+        })
+      )
+      const map = new Map<string, MerchantDetails>()
+      entries.forEach(([mid, d]) => { if (d) map.set(mid, d) })
+      setMerchantMap(map)
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load() }, [])
 
   async function sendReply(ticket: SupportTicket) {
@@ -332,7 +945,7 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
     filter === 'all' ? true : filter === 'open' ? t.status !== 'closed' : t.status === 'closed'
   )
 
-  if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-24 bg-gray-200 rounded-xl" />)}</div>
+  if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-28 bg-gray-200 rounded-xl" />)}</div>
 
   return (
     <div className="space-y-4">
@@ -349,67 +962,105 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
         <div className="text-center py-12 text-gray-400">Talep yok</div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((t) => (
-            <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-semibold text-gray-900">{t.subject}</p>
-                  <p className="text-xs text-gray-400">{t.merchantName} · {formatDateTime(t.createdAt)}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.status === 'open' ? 'bg-blue-100 text-blue-700' : t.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
+          {filtered.map((t) => {
+            const md = merchantMap.get(t.merchantId)
+            return (
+              <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
+                {/* Başlık */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-gray-900">{t.subject}</p>
+                    <p className="text-xs text-gray-400">{t.merchantName} · {formatDateTime(t.createdAt)}</p>
+                  </div>
+                  <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${t.status === 'open' ? 'bg-blue-100 text-blue-700' : t.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
                     {t.status === 'open' ? 'Açık' : t.status === 'in_progress' ? 'İşlemde' : 'Kapandı'}
                   </span>
                 </div>
-              </div>
 
-              <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3">{t.message}</p>
-
-              {t.adminReply && (
-                <div className="bg-green-50 border border-green-100 rounded-lg p-3">
-                  <p className="text-xs font-medium text-green-700 mb-1">Yanıtınız</p>
-                  <p className="text-sm text-green-800">{t.adminReply}</p>
-                </div>
-              )}
-
-              {replyingId === t.id ? (
-                <div className="space-y-2">
-                  <textarea value={replyText} onChange={(e) => setReplyText(e.target.value)} rows={3}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                    placeholder="Yanıtınızı yazın…" />
-                  <div className="flex gap-2">
-                    <button onClick={() => void sendReply(t)} disabled={saving || !replyText.trim()}
-                      className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                      {saving ? 'Gönderiliyor…' : 'Yanıtla ve Kapat'}
-                    </button>
-                    <button onClick={() => { setReplyingId(null); setReplyText('') }}
-                      className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm">
-                      İptal
-                    </button>
+                {/* Firma bilgileri */}
+                {md && (
+                  <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <a href={`tel:${md.phone}`}
+                      className="flex items-center gap-1.5 text-gray-700 hover:text-violet-700 transition-colors col-span-2 font-medium">
+                      <span>📞</span> {md.phone}
+                    </a>
+                    <div className="flex items-center gap-1.5 text-gray-600">
+                      <span>🏪</span> {md.sector}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-gray-600">
+                      <span>📍</span> {md.city}{md.district ? `, ${md.district}` : ''}
+                    </div>
+                    <div className="flex items-center gap-1.5 col-span-2">
+                      <span>💳</span>
+                      <span className="font-semibold text-gray-800">{PLAN_LABELS[md.plan] ?? md.plan}</span>
+                      {md.planStatus && (
+                        <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${md.planStatus === 'active' ? 'bg-green-100 text-green-700' : md.planStatus === 'trialing' ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {md.planStatus === 'active' ? 'Aktif' : md.planStatus === 'trialing' ? 'Deneme' : md.planStatus}
+                        </span>
+                      )}
+                    </div>
+                    {md.instagram && (
+                      <a href={`https://instagram.com/${md.instagram.replace(/^@/, '')}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-gray-600 hover:text-pink-600 transition-colors col-span-2">
+                        <span>📷</span> @{md.instagram.replace(/^@/, '')}
+                      </a>
+                    )}
                   </div>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <button onClick={() => { setReplyingId(t.id); setReplyText(t.adminReply ?? '') }}
-                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium">
-                    {t.adminReply ? 'Yanıtı Düzenle' : 'Yanıtla'}
-                  </button>
-                  {t.status !== 'in_progress' && t.status !== 'closed' && (
-                    <button onClick={() => void setStatus(t.id, 'in_progress')}
-                      className="bg-amber-100 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium">
-                      İşlemde
+                )}
+
+                {/* Mesaj */}
+                <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap">{t.message}</p>
+
+                {t.adminReply && (
+                  <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+                    <p className="text-xs font-medium text-green-700 mb-1">Yanıtınız</p>
+                    <p className="text-sm text-green-800 whitespace-pre-wrap">{t.adminReply}</p>
+                    {t.repliedAt && (
+                      <p className="text-xs text-green-500 mt-1">{formatDateTime(t.repliedAt)}</p>
+                    )}
+                  </div>
+                )}
+
+                {replyingId === t.id ? (
+                  <div className="space-y-2">
+                    <textarea value={replyText} onChange={(e) => setReplyText(e.target.value)} rows={4}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                      placeholder="Yanıtınızı yazın…" />
+                    <div className="flex gap-2">
+                      <button onClick={() => void sendReply(t)} disabled={saving || !replyText.trim()}
+                        className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                        {saving ? 'Gönderiliyor…' : 'Yanıtla ve Kapat'}
+                      </button>
+                      <button onClick={() => { setReplyingId(null); setReplyText('') }}
+                        className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm">
+                        İptal
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => { setReplyingId(t.id); setReplyText(t.adminReply ?? '') }}
+                      className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium">
+                      {t.adminReply ? 'Yanıtı Düzenle' : 'Yanıtla'}
                     </button>
-                  )}
-                  {t.status !== 'closed' && (
-                    <button onClick={() => void setStatus(t.id, 'closed')}
-                      className="bg-gray-100 text-gray-600 px-3 py-2 rounded-lg text-sm">
-                      Kapat
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+                    {t.status !== 'in_progress' && t.status !== 'closed' && (
+                      <button onClick={() => void setStatus(t.id, 'in_progress')}
+                        className="bg-amber-100 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium">
+                        İşlemde
+                      </button>
+                    )}
+                    {t.status !== 'closed' && (
+                      <button onClick={() => void setStatus(t.id, 'closed')}
+                        className="bg-gray-100 text-gray-600 px-3 py-2 rounded-lg text-sm">
+                        Kapat
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

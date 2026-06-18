@@ -5,9 +5,8 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
 
     function isAdmin() {
-      // Admin UID'lerini buraya ve VITE_ADMIN_UIDS (.env) içine aynı şekilde gir.
       return signedIn() && request.auth.uid in [
-        'YFKkEnWq36ZO5EzVkseAYg0oYCC2'
+        'QGdmCNKAahg6uWiUhEBt5dcGNFD3'
       ];
     }
 
@@ -17,14 +16,16 @@ service cloud.firestore {
     function isMerchantOwner(mid) {
       return signedIn() && merchantDoc(mid).data.ownerId == request.auth.uid;
     }
+    function userMerchantId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId;
+    }
 
-    // Kullanıcı profili (merchantId pointer'ı burada)
     match /users/{userId} {
-      allow get, create, update: if signedIn() && request.auth.uid == userId;
+      allow get, create: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow update: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list, delete: if isAdmin();
     }
 
-    // Slug benzersizliği — create owner'a kısıtlı (squatting önlenir; merchant önce var olmalı)
     match /publicSlugs/{slug} {
       allow get: if true;
       allow list: if false;
@@ -33,19 +34,20 @@ service cloud.firestore {
     }
 
     match /merchants/{merchantId} {
-      allow get:    if true;                  // PII yok; public kart/tanıtım için
-      allow list:   if isAdmin();             // enumerasyon engellenir
+      allow get:    if true;
+      // list: kullanıcı yalnızca kendi ownerId'siyle eşleşen belgeleri sorgulayabilir (kurtarma akışı)
+      allow list:   if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update: if isMerchantOwner(merchantId) || isAdmin();
-      allow delete: if isAdmin();             // cascade yok; owner silemez
+      allow delete: if isAdmin();
 
       match /campaigns/{campaignId} {
-        allow get:  if true;                  // PII yok; public kart için
+        allow get:  if true;
         allow list: if isMerchantOwner(merchantId) || isAdmin();
         allow create, update, delete: if isMerchantOwner(merchantId) || isAdmin();
       }
 
-      match /customers/{customerId} {         // PII
+      match /customers/{customerId} {
         allow read, write: if isMerchantOwner(merchantId) || isAdmin();
       }
 
@@ -55,51 +57,49 @@ service cloud.firestore {
 
       match /transactions/{transactionId} {
         allow read, create: if isMerchantOwner(merchantId) || isAdmin();
-        allow update, delete: if false;       // değişmez (audit)
+        allow update, delete: if false;
       }
 
       match /subscription/{docId} {
         allow get:  if isMerchantOwner(merchantId) || isAdmin();
         allow list: if isAdmin();
-        allow create, update, delete: if isAdmin();   // owner planını yazamaz
+        // Sahip sadece trial oluşturabilir (onboarding); plan yükseltme/değişiklik sadece admin
+        allow create: if isAdmin()
+          || (isMerchantOwner(merchantId)
+              && request.resource.data.plan == 'trial'
+              && request.resource.data.status == 'trialing');
+        allow update, delete: if isAdmin();
       }
     }
 
-    // Destek talepleri — merchant yalnızca kendi merchant'ına ait bilet oluşturabilir
+    // Destek talepleri
     match /supportTickets/{ticketId} {
-      // create: merchantId kullanıcının gerçek merchant'ıyla eşleşmeli
+      // create: sadece kendi merchant'ı için
       allow create: if signedIn()
         && request.resource.data.merchantId != null
-        && request.resource.data.merchantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId;
-      // get: admin veya bilet sahibi merchant
-      allow get: if isAdmin()
-        || (signedIn() && resource.data.merchantId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId);
-      // list: sadece admin tümünü listeler; merchant kendi sorgusunu yapabilir ama rule bunu kısıtlayamaz,
-      // bu nedenle list izni signedIn olarak bırakılır; PII riski düşük (kendi biletleri)
-      allow list: if signedIn();
+        && request.resource.data.merchantId == userMerchantId();
+      // get / list: admin veya bilet kendi merchant'ına ait
+      allow get:  if isAdmin() || (signedIn() && resource.data.merchantId == userMerchantId());
+      allow list: if isAdmin() || (signedIn() && resource.data.merchantId == userMerchantId());
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
-    // Global yapılandırma (fiyatlandırma vb.) — sadece admin yazar
+    // Global config — fiyatlandırma herkese okunabilir (landing page için)
     match /config/{docId} {
-      allow get:  if signedIn();
+      allow get:  if true;
       allow list: if isAdmin();
       allow create, update, delete: if isAdmin();
     }
 
     match /publicCards/{cardToken} {
-      allow get:  if true;                     // PII yok; pasifi UI gösterir
+      allow get:  if true;
       allow list: if false;
-
       allow create: if isAdmin() || isMerchantOwner(request.resource.data.merchantId);
-
-      // Bağlayıcı alanlar update'te değiştirilemez
       allow update: if (isAdmin() || isMerchantOwner(resource.data.merchantId))
         && request.resource.data.merchantId   == resource.data.merchantId
         && request.resource.data.campaignId   == resource.data.campaignId
         && request.resource.data.membershipId == resource.data.membershipId;
-
       allow delete: if isAdmin() || isMerchantOwner(resource.data.merchantId);
     }
   }

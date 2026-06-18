@@ -1,4 +1,4 @@
-import { getFirestore, writeBatch, runTransaction, doc, collection, query, where, getDocs, increment, serverTimestamp } from 'firebase/firestore'
+import { getFirestore, writeBatch, runTransaction, doc, collection, query, where, getDocs, increment, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore'
 import { app } from './config'
 import { generateCardToken } from '@/lib/token'
 import { normalizePhone } from '@/lib/phone'
@@ -56,6 +56,44 @@ export async function createCustomerWithCard(p: {
   })
   await batch.commit()
   return { customerId: customerRef.id, membershipId: membershipRef.id, cardToken }
+}
+
+// ─── 13.1b Mevcut Müşteriyi Kampanyaya Kaydetme ──────────────────────────────
+export async function enrollCustomerInCampaign(p: {
+  merchantId: string
+  customerId: string
+  campaignId: string
+  customerDisplayName: string
+}) {
+  const cardToken = generateCardToken()
+  const membershipRef = doc(collection(db, 'merchants', p.merchantId, 'memberships'))
+  const publicCardRef = doc(db, 'publicCards', cardToken)
+
+  const batch = writeBatch(db)
+  batch.set(membershipRef, {
+    customerId: p.customerId,
+    campaignId: p.campaignId,
+    cardToken,
+    currentStamps: 0,
+    totalEarnedStamps: 0,
+    totalRedeemedRewards: 0,
+    status: 'active',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+  batch.set(publicCardRef, {
+    merchantId: p.merchantId,
+    campaignId: p.campaignId,
+    membershipId: membershipRef.id,
+    cardToken,
+    currentStamps: 0,
+    status: 'active',
+    customerDisplayName: p.customerDisplayName,
+    lastUpdatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  })
+  await batch.commit()
+  return { membershipId: membershipRef.id, cardToken }
 }
 
 // ─── 13.2 Damga / Puan Ekleme ────────────────────────────────────────────────
@@ -146,24 +184,43 @@ export async function redeemReward(p: {
   })
 }
 
-// ─── 14. Kampanya Aktif Etme ──────────────────────────────────────────────────
-export async function activateCampaign(merchantId: string, campaignId: string) {
-  const activeQ = query(
-    collection(db, 'merchants', merchantId, 'campaigns'),
-    where('status', '==', 'active'),
-  )
-  const activeSnap = await getDocs(activeQ)
-
+// ─── 14. Kampanya Aktif/Pasif Etme ───────────────────────────────────────────
+// multiActive: true → standart/pro (birden fazla aynı anda aktif olabilir)
+//              false → trial/mini (sadece 1 aktif)
+export async function activateCampaign(merchantId: string, campaignId: string, multiActive = false) {
   const batch = writeBatch(db)
-  activeSnap.forEach((d) => {
-    if (d.id !== campaignId) batch.update(d.ref, { status: 'passive', updatedAt: serverTimestamp() })
-  })
+
+  if (!multiActive) {
+    const activeSnap = await getDocs(query(
+      collection(db, 'merchants', merchantId, 'campaigns'),
+      where('status', '==', 'active'),
+    ))
+    activeSnap.forEach((d) => {
+      if (d.id !== campaignId) batch.update(d.ref, { status: 'passive', updatedAt: serverTimestamp() })
+    })
+  }
+
   batch.update(doc(db, 'merchants', merchantId, 'campaigns', campaignId), {
     status: 'active',
     updatedAt: serverTimestamp(),
   })
   batch.update(doc(db, 'merchants', merchantId), {
     activeCampaignId: campaignId,
+    activeCampaignIds: multiActive ? arrayUnion(campaignId) : [campaignId],
+    updatedAt: serverTimestamp(),
+  })
+  await batch.commit()
+}
+
+export async function deactivateCampaign(merchantId: string, campaignId: string) {
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'merchants', merchantId, 'campaigns', campaignId), {
+    status: 'passive',
+    updatedAt: serverTimestamp(),
+  })
+  batch.update(doc(db, 'merchants', merchantId), {
+    activeCampaignIds: arrayRemove(campaignId),
+    activeCampaignId: null,
     updatedAt: serverTimestamp(),
   })
   await batch.commit()

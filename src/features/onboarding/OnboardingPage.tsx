@@ -1,16 +1,16 @@
-import { useState } from 'react'
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { collection, doc, getDoc, getDocs, query, setDoc, serverTimestamp, Timestamp, where } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
 import { toSlug, isValidSlug } from '@/lib/slug'
 
+const TRIAL_DAYS = 14
+
 const SECTORS = ['Kafe', 'Kuaför', 'Oto Yıkama', 'Restaurant', 'Pastane', 'Berber', 'Diğer']
 
 export default function OnboardingPage() {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [sector, setSector] = useState('')
@@ -18,7 +18,45 @@ export default function OnboardingPage() {
   const [district, setDistrict] = useState('')
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
   const [slugTouched, setSlugTouched] = useState(false)
+
+  // Mevcut işletme kurtarma: kullanıcının daha önce oluşturduğu mağaza varsa tekrar bağla
+  const [existingMerchant, setExistingMerchant] = useState<{ id: string; name: string } | null>(null)
+  const [checkingExisting, setCheckingExisting] = useState(true)
+
+  useEffect(() => {
+    if (!user) return
+    getDocs(query(collection(db, 'merchants'), where('ownerId', '==', user.uid)))
+      .then((snap) => {
+        if (snap.empty) return
+        const sorted = snap.docs.sort((a, b) => {
+          const aT = (a.data().createdAt as { toMillis(): number } | null)?.toMillis() ?? 0
+          const bT = (b.data().createdAt as { toMillis(): number } | null)?.toMillis() ?? 0
+          return bT - aT
+        })
+        const m = sorted[0]
+        setExistingMerchant({ id: m.id, name: m.data().name as string })
+      })
+      .catch(console.error)
+      .finally(() => setCheckingExisting(false))
+  }, [user])
+
+  async function handleRecover() {
+    if (!user || !existingMerchant) return
+    setLoading(true)
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        merchantId: existingMerchant.id,
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+      // AuthContext onSnapshot ile değişikliği alır, OnboardingGuard /app'e yönlendirir
+    } catch (err) {
+      console.error(err)
+      toast.error('Bağlantı kurulamadı. Lütfen tekrar deneyin.')
+      setLoading(false)
+    }
+  }
 
   function handleNameChange(val: string) {
     setName(val)
@@ -64,27 +102,93 @@ export default function OnboardingPage() {
         updatedAt: serverTimestamp(),
       })
 
-      // users.merchantId pointer yaz (merge: doc yoksa oluşturur, varsa sadece pointer güncellenir)
+      // users.merchantId pointer yaz
       await setDoc(doc(db, 'users', user.uid), {
         merchantId: merchantRef.id,
         updatedAt: serverTimestamp(),
       }, { merge: true })
 
-      // publicSlugs oluştur (Rules: merchant önce var olmalı, bu sıra gerekli)
+      // publicSlugs oluştur
       await setDoc(slugRef, {
         merchantId: merchantRef.id,
         isActive: true,
         createdAt: serverTimestamp(),
       })
 
+      // 14 günlük deneme aboneliği oluştur
+      const now = Timestamp.now()
+      const trialEnd = Timestamp.fromMillis(now.toMillis() + TRIAL_DAYS * 24 * 3600 * 1000)
+      await setDoc(doc(db, 'merchants', merchantRef.id, 'subscription', 'current'), {
+        plan: 'trial',
+        status: 'trialing',
+        billingCycle: null,
+        currentPeriodStart: now,
+        currentPeriodEnd: trialEnd,
+        updatedAt: serverTimestamp(),
+      })
+
       toast.success('İşletmeniz oluşturuldu!')
-      navigate('/app')
+      setDone(true)
+      // navigate('/app') — OnboardingGuard onSnapshot ile otomatik yönlendirir
     } catch (err: unknown) {
       console.error(err)
       toast.error('İşletme oluşturulamadı. Lütfen tekrar deneyin.')
     } finally {
       setLoading(false)
     }
+  }
+
+  if (checkingExisting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-violet-600" />
+      </div>
+    )
+  }
+
+  if (existingMerchant) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center space-y-5">
+            <div className="text-5xl">🏪</div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Mevcut İşletme Bulundu</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Hesabınıza bağlı bir işletme var. Panele devam etmek için bağlantıyı yenileyin.
+              </p>
+              <div className="mt-3 bg-indigo-50 rounded-xl px-4 py-3">
+                <p className="font-semibold text-indigo-800">{existingMerchant.name}</p>
+              </div>
+            </div>
+            <button
+              onClick={handleRecover}
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 transition-all shadow-sm"
+            >
+              {loading ? 'Bağlanıyor…' : 'Panelime Git'}
+            </button>
+            <button
+              onClick={() => setExistingMerchant(null)}
+              className="text-sm text-gray-400 hover:text-gray-600"
+            >
+              Yeni işletme oluştur
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (done) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-violet-600 mx-auto" />
+          <p className="text-sm text-gray-500">Paneliniz hazırlanıyor…</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -109,7 +213,7 @@ export default function OnboardingPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               İşletme Linki
-              <span className="text-gray-400 font-normal ml-1">(damgakart.com/<strong>{slug || 'linkiniz'}</strong>)</span>
+              <span className="text-gray-400 font-normal ml-1">(sadex.app/<strong>{slug || 'linkiniz'}</strong>)</span>
             </label>
             <input
               type="text"

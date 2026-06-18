@@ -3,27 +3,24 @@ import { collection, getDocs, query, where, Timestamp, doc, getDoc } from 'fireb
 import { Link } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
-import { useMerchant } from '@/hooks/useMerchant'
+import { useMerchantSub } from '@/contexts/MerchantSubContext'
 import { startOfMonth } from '@/lib/dates'
-import { PLAN_LIMITS } from '@/lib/constants'
-import type { Subscription } from '@/types'
+import { brandStyle } from '@/lib/utils'
 
 export default function DashboardPage() {
   const { user } = useAuth()
-  const { merchant, loading } = useMerchant()
+  const { merchant, sub, limits, loading } = useMerchantSub()
   const [customerCount, setCustomerCount] = useState<number | null>(null)
   const [monthlyTx, setMonthlyTx] = useState<number | null>(null)
-  const [subscription, setSubscription] = useState<Subscription | null>(null)
+  const [nearingReward, setNearingReward] = useState<number | null>(null)
 
   useEffect(() => {
     if (!merchant) return
 
-    // Müşteri sayısı
     getDocs(collection(db, 'merchants', merchant.id, 'customers'))
       .then((snap) => setCustomerCount(snap.size))
       .catch(console.error)
 
-    // Bu ayki işlem sayısı
     const monthStart = startOfMonth()
     getDocs(
       query(
@@ -34,10 +31,36 @@ export default function DashboardPage() {
       .then((snap) => setMonthlyTx(snap.size))
       .catch(console.error)
 
-    // Abonelik — list yasak, get ile doğrudan 'current' dökümanını çek
-    getDoc(doc(db, 'merchants', merchant.id, 'subscription', 'current'))
-      .then((snap) => { if (snap.exists()) setSubscription(snap.data() as Subscription) })
-      .catch(console.error)
+    const campaignIds = merchant.activeCampaignIds?.length
+      ? merchant.activeCampaignIds
+      : merchant.activeCampaignId ? [merchant.activeCampaignId] : []
+
+    if (campaignIds.length > 0) {
+      Promise.all(campaignIds.map((id) => getDoc(doc(db, 'merchants', merchant.id, 'campaigns', id))))
+        .then(async (snaps) => {
+          const campaigns = snaps
+            .filter((s) => s.exists())
+            .map((s) => ({ id: s.id, requiredStamps: (s.data()['requiredStamps'] as number) ?? 0 }))
+
+          const counts = await Promise.all(
+            campaigns.map(async (c) => {
+              const threshold = Math.max(1, c.requiredStamps - 1)
+              const mSnap = await getDocs(
+                query(collection(db, 'merchants', merchant.id, 'memberships'), where('campaignId', '==', c.id))
+              )
+              return mSnap.docs.filter((d) => {
+                const stamps = (d.data()['currentStamps'] as number) ?? 0
+                // 1 eksik veya zaten hakkı var (ödül almadan devam etmiş)
+                return d.data()['status'] === 'active' && stamps >= threshold
+              }).length
+            })
+          )
+          setNearingReward(counts.reduce((a, b) => a + b, 0))
+        })
+        .catch(console.error)
+    } else {
+      setNearingReward(0)
+    }
   }, [merchant])
 
   if (loading) return <LoadingSkeleton />
@@ -52,23 +75,59 @@ export default function DashboardPage() {
     )
   }
 
-  const plan = subscription?.plan ?? 'trial'
-  const limits = PLAN_LIMITS[plan]
+  const plan = sub?.plan ?? 'trial'
+  const subscription = sub
+
+  const cardStyle = brandStyle(merchant.brandColor ?? '#6366f1', merchant.brandColor2)
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">{merchant.name}</h1>
-        <p className="text-sm text-gray-500">{merchant.sector} · {merchant.city}, {merchant.district}</p>
+      {/* Mağaza kimlik kartı */}
+      <div className="rounded-2xl overflow-hidden" style={cardStyle}>
+        <div className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-black/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+              <span className="text-2xl font-black text-white">
+                {merchant.name[0]?.toLocaleUpperCase('tr')}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl font-extrabold text-white leading-tight truncate">{merchant.name}</h1>
+              <p className="text-sm text-white/75 mt-0.5">{merchant.sector}</p>
+              <p className="text-xs text-white/55">{merchant.city}, {merchant.district}</p>
+            </div>
+          </div>
+
+          <a
+            href={`/m/${merchant.slug}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-4 flex items-center justify-between bg-black/15 hover:bg-black/25 transition-colors rounded-xl px-3 py-2.5"
+          >
+            <span className="text-sm font-medium text-white">🏪 İşletme Sayfam</span>
+            <span className="text-xs text-white/60">sadex.app/m/{merchant.slug} ↗</span>
+          </a>
+        </div>
       </div>
 
       {/* Plan uyarısı */}
-      {plan === 'trial' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-          Deneme sürümündesiniz. Abonelik planı için{' '}
-          <Link to="/app/subscription" className="font-semibold underline">buraya tıklayın</Link>.
-        </div>
-      )}
+      {plan === 'trial' && subscription && (() => {
+        const msLeft = subscription.currentPeriodEnd.toDate().getTime() - Date.now()
+        const daysLeft = Math.ceil(msLeft / 86_400_000)
+        const expired = msLeft <= 0
+        return (
+          <div className={`rounded-xl p-4 text-sm ${expired ? 'bg-red-50 border border-red-200 text-red-700' : daysLeft <= 3 ? 'bg-orange-50 border border-orange-200 text-orange-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+            {expired ? (
+              <>Deneme süreniz sona erdi. Panele erişmek için{' '}<Link to="/app/subscription" className="font-semibold underline">bir plan seçin</Link>.</>
+            ) : (
+              <>
+                Deneme sürümündesiniz — <strong>{daysLeft} gün</strong> kaldı.{' '}
+                <Link to="/app/subscription" className="font-semibold underline">Plan seçin →</Link>
+              </>
+            )}
+          </div>
+        )
+      })()}
 
       {/* İstatistik kartları */}
       <div className="grid grid-cols-2 gap-3">
@@ -84,6 +143,16 @@ export default function DashboardPage() {
           sub={`/ ${limits.maxMonthlyTransactions === Infinity ? '∞' : limits.maxMonthlyTransactions}`}
           warn={monthlyTx !== null && limits.maxMonthlyTransactions !== Infinity && monthlyTx >= limits.maxMonthlyTransactions * 0.9}
         />
+        <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-amber-700 font-medium uppercase tracking-wide">Ödül Hakkı / Yakın</p>
+            <p className="text-2xl font-bold text-amber-800 mt-1">
+              {nearingReward ?? '…'}
+              <span className="text-sm font-normal text-amber-600 ml-1.5">müşteri</span>
+            </p>
+          </div>
+          <div className="text-3xl">🎯</div>
+        </div>
       </div>
 
       {/* Hızlı erişim */}
@@ -94,30 +163,23 @@ export default function DashboardPage() {
         <QuickLink to="/app/campaigns" icon="🎯" label="Kampanyalar" color="bg-amber-50 text-amber-700" />
       </div>
 
-      {/* İşletme sayfası önizleme */}
-      <a
-        href={`/m/${merchant.slug}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center justify-between bg-white rounded-xl border border-indigo-100 px-4 py-3 hover:bg-indigo-50 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <span className="text-xl">🏪</span>
-          <div>
-            <p className="text-sm font-semibold text-gray-900">İşletme Sayfam</p>
-            <p className="text-xs text-gray-400">/m/{merchant.slug}</p>
+      {/* Aktif kampanyalar */}
+      {(() => {
+        const ids = merchant.activeCampaignIds && merchant.activeCampaignIds.length > 0
+          ? merchant.activeCampaignIds
+          : merchant.activeCampaignId ? [merchant.activeCampaignId] : []
+        if (ids.length === 0) return null
+        return (
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
+              Aktif Kampanya{ids.length > 1 ? 'lar' : ''}
+            </p>
+            {ids.map((id) => (
+              <ActiveCampaignCard key={id} merchantId={merchant.id} campaignId={id} />
+            ))}
           </div>
-        </div>
-        <span className="text-indigo-400 text-sm">↗ Görüntüle</span>
-      </a>
-
-      {/* Aktif kampanya */}
-      {merchant.activeCampaignId && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4">
-          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Aktif Kampanya</p>
-          <ActiveCampaignCard merchantId={merchant.id} campaignId={merchant.activeCampaignId} />
-        </div>
-      )}
+        )
+      })()}
 
       <div className="text-center">
         <p className="text-xs text-gray-400">Giriş: {user?.email}</p>
@@ -148,14 +210,21 @@ function QuickLink({ to, icon, label, color }: { to: string; icon: string; label
 }
 
 function ActiveCampaignCard({ merchantId, campaignId }: { merchantId: string; campaignId: string }) {
-  const [name, setName] = useState('')
+  const [data, setData] = useState<{ name: string; type: string } | null>(null)
   useEffect(() => {
     getDoc(doc(db, 'merchants', merchantId, 'campaigns', campaignId))
-      .then((snap) => { if (snap.exists()) setName(snap.data()['name'] as string) })
+      .then((snap) => {
+        if (snap.exists()) setData({ name: snap.data()['name'] as string, type: snap.data()['type'] as string })
+      })
       .catch(console.error)
   }, [merchantId, campaignId])
-  if (!name) return null
-  return <p className="text-sm font-semibold text-gray-900 mt-1">{name}</p>
+  if (!data) return null
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <span className="text-sm">{data.type === 'points' ? '🏆' : '✅'}</span>
+      <p className="text-sm font-semibold text-gray-900">{data.name}</p>
+    </div>
+  )
 }
 
 function LoadingSkeleton() {

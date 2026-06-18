@@ -28,10 +28,26 @@
 **Karar:** Alt navigasyonda 5 öğe: Ana Sayfa, Kampanya, Müşteriler, Damga Ekle, Ödül Kullandır. Diğerleri (İşlemler, QR, Abonelik, Ayarlar) header'dan veya hızlı erişimden ulaşılır.  
 **Neden:** Mobil-first tasarımda 5'ten fazla bottom nav öğesi tıklanabilirlik sorununa yol açar.
 
-## D-007: `/m/:merchantSlug` opsiyonel — MVP'de eklenmedi
-**Karar:** SPEC bölüm 7'de "opsiyonel" yazıyor; bu rota implementasyona alınmadı.  
-**Neden:** MVP kapsamını dar tutmak; `/c/:cardToken` çekirdek akış.
+## D-007: `/m/:slug` public işletme sayfası eklendi
+**Karar:** SPEC bölüm 7'de "opsiyonel" yazmasına rağmen `PublicMerchantPage` (`/m/:slug`) implemente edildi.  
+**Neden:** Landing page alternatifi olarak işletmenin aktif kampanyalarını müşterilere göstermek; müşteri kaydı için yönlendirme noktası. Çekirdek akış hâlâ `/c/:cardToken`.
 
 ## D-008: Manual adjustment MVP dışı transaction UI'ı
 **Karar:** `manual_adjustment` tipi transaction modelde var, UI yok.  
 **Neden:** SPEC'te "düzeltme silmeyle değil, `manual_adjustment` ile telafi edilir" deniyor fakat UI akışı belirtilmemiyor. V2'ye bırakıldı.
+
+## D-009: Owner trial subscription create edebilir
+**Karar:** Firestore Rules'ta `subscription/current` create, owner için `plan == 'trial' && status == 'trialing'` koşuluyla izin veriliyor.  
+**Neden:** Admin doküman oluşturana kadar onboarding'in çalışabilmesi için. SPEC'teki "abonelik yazımı sadece admin" kuralından bilinçli sapma. Plan yükseltme/değiştirme yine sadece admin.
+
+## D-010: Merchant list — owner kendi kayıtlarını sorgulayabilir
+**Karar:** Firestore Rules'ta `merchants` list, `resource.data.ownerId == request.auth.uid` koşuluyla signed-in user'a açık.  
+**Neden:** OnboardingPage kurtarma akışı: `users/{uid}` bozulmuş olduğunda merchant'ı bulmak için `where('ownerId', '==', uid)` sorgusu gerekiyor. Admin tüm listeyi görebilir; diğer kullanıcılar yalnızca kendi kayıtlarını döndüren sorgular yapabilir.
+
+## D-011: Support ticket erişim modeli
+**Karar:** supportTickets create/get/list, `userMerchantId()` helper'ı ile doğrulanan sahip merchant kontrolüne bağlandı.  
+**Neden:** Kullanıcı sadece kendi merchant'ına ait destek taleplerini görebilmeli; admin tüm talepleri yönetir.
+
+## D-012: Plan bazlı çoklu aktif kampanya
+**Karar:** Standart ve Pro planlar aynı anda birden fazla kampanyayı aktif edebilir. Trial ve Mini tek aktif kampanya ile sınırlı. Merchant dokümanına `activeCampaignIds: string[]` alanı eklendi; `activeCampaignId` backward compat için korundu.  
+**Neden:** Kullanıcı talebi — farklı türde kampanyaların (damga + puan gibi) eş zamanlı yürütülmesi. SPEC'teki "tek aktif kampanya" kuralından bilinçli sapma.
