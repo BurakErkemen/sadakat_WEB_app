@@ -13,16 +13,45 @@ service cloud.firestore {
     function merchantDoc(mid) {
       return get(/databases/$(database)/documents/merchants/$(mid));
     }
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+    function isApprovedUser() {
+      return signedIn()
+        && userDoc(request.auth.uid).data.status == 'approved';
+    }
     function isMerchantOwner(mid) {
-      return signedIn() && merchantDoc(mid).data.ownerId == request.auth.uid;
+      return isApprovedUser()
+        && merchantDoc(mid).data.ownerId == request.auth.uid;
     }
     function userMerchantId() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.merchantId;
     }
 
     match /users/{userId} {
-      allow get, create: if signedIn() && (request.auth.uid == userId || isAdmin());
-      allow update: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if signedIn() && (
+        isAdmin() ||
+        (request.auth.uid == userId
+          && request.resource.data.status == 'pending'
+          && request.resource.data.merchantId == null)
+      );
+      // Sahip yalnızca güvenli alanları güncelleyebilir; status sadece admin tarafından değiştirilebilir.
+      // merchantId: mevcut değer null iken VE hedef merchant'ın ownerId'si bu kullanıcıya ait ise yazılabilir.
+      // Bu kural, kullanıcının başka bir kiracının merchantId'sini çalmasını engeller.
+      allow update: if signedIn() && (
+        isAdmin() ||
+        (request.auth.uid == userId &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['displayName', 'phone', 'merchantId', 'updatedAt']) &&
+         (
+           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['merchantId']) ||
+           (isApprovedUser() &&
+            resource.data.merchantId == null &&
+            get(/databases/$(database)/documents/merchants/$(request.resource.data.merchantId)).data.ownerId == request.auth.uid)
+         )
+        )
+      );
       allow list, delete: if isAdmin();
     }
 
@@ -36,8 +65,9 @@ service cloud.firestore {
     match /merchants/{merchantId} {
       allow get:    if true;
       // list: kullanıcı yalnızca kendi ownerId'siyle eşleşen belgeleri sorgulayabilir (kurtarma akışı)
-      allow list:   if isAdmin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow list:   if isAdmin() || (isApprovedUser() && resource.data.ownerId == request.auth.uid);
+      allow create: if isApprovedUser()
+        && request.resource.data.ownerId == request.auth.uid;
       allow update: if isMerchantOwner(merchantId) || isAdmin();
       allow delete: if isAdmin();
 
@@ -70,17 +100,36 @@ service cloud.firestore {
               && request.resource.data.status == 'trialing');
         allow update, delete: if isAdmin();
       }
+
+      // Satın alma onay kayıtları — hukuki ispat için; sadece oluşturulabilir, değiştirilemez.
+      // Tüm zorunlu hukuki alanların varlığı kural seviyesinde doğrulanır.
+      match /paymentConsents/{consentId} {
+        allow create: if isMerchantOwner(merchantId)
+          && request.resource.data.merchantId == merchantId
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.keys().hasAll([
+               'merchantId', 'userId', 'planId', 'planLabel',
+               'billingCycle', 'displayedPrice', 'actionType',
+               'acceptedTermsVersion', 'acceptedAt'
+             ])
+          && request.resource.data.billingCycle in ['monthly', 'yearly']
+          && request.resource.data.actionType in ['shopier', 'admin_contact']
+          && request.resource.data.displayedPrice is number
+          && request.resource.data.displayedPrice > 0;
+        allow read: if isMerchantOwner(merchantId) || isAdmin();
+        allow update, delete: if false;
+      }
     }
 
     // Destek talepleri
     match /supportTickets/{ticketId} {
       // create: sadece kendi merchant'ı için
-      allow create: if signedIn()
+      allow create: if isApprovedUser()
         && request.resource.data.merchantId != null
         && request.resource.data.merchantId == userMerchantId();
       // get / list: admin veya bilet kendi merchant'ına ait
-      allow get:  if isAdmin() || (signedIn() && resource.data.merchantId == userMerchantId());
-      allow list: if isAdmin() || (signedIn() && resource.data.merchantId == userMerchantId());
+      allow get:  if isAdmin() || (isApprovedUser() && resource.data.merchantId == userMerchantId());
+      allow list: if isAdmin() || (isApprovedUser() && resource.data.merchantId == userMerchantId());
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
@@ -90,6 +139,37 @@ service cloud.firestore {
       allow get:  if true;
       allow list: if isAdmin();
       allow create, update, delete: if isAdmin();
+    }
+
+    // Admin denetim kayıtları yalnızca eklenebilir; geçmiş değiştirilemez.
+    match /adminAuditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'action', 'targetType', 'targetId', 'summary', 'actorUid', 'createdAt'
+        ]);
+      allow update, delete: if false;
+    }
+
+    // Admin paneline ait görünüm tercihleri; audit kayıtlarının kendisini değiştirmez.
+    match /adminSettings/{docId} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Tahsilat ve gider defteri: düzeltmeler yeni ters kayıtla yapılır.
+    match /financeEntries/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasAll([
+          'type', 'amount', 'description', 'occurredAt', 'createdAt'
+        ])
+        && request.resource.data.type in ['revenue', 'firebase_expense', 'other_expense']
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     match /publicCards/{cardToken} {

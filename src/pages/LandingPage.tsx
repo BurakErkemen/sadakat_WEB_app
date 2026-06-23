@@ -60,6 +60,17 @@ export default function LandingPage() {
     return remote?.yearlyPrice ?? meta.defaultYearly
   }
 
+  const yearlyDiscountPct = configLoading
+    ? 20
+    : Math.round(
+        PLAN_META.reduce((sum, p) => {
+          const remote = remoteConfig[p.id]
+          const monthly = remote?.monthlyPrice ?? p.defaultMonthly
+          const yearly = remote?.yearlyPrice ?? p.defaultYearly
+          return monthly > 0 ? sum + (1 - yearly / monthly) * 100 : sum
+        }, 0) / PLAN_META.length,
+      )
+
   function getShopierUrl(planId: string, cycle: 'monthly' | 'yearly'): string | null {
     const remote = remoteConfig[planId]
     if (!remote) return null
@@ -210,7 +221,7 @@ export default function LandingPage() {
                 onClick={() => setBillingCycle('yearly')}
                 className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${billingCycle === 'yearly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 Yıllık
-                <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">%20</span>
+                <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">%{yearlyDiscountPct}</span>
               </button>
             </div>
           </div>

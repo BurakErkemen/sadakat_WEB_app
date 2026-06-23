@@ -37,7 +37,7 @@ export default function RegisterPage() {
         email,
         phone: null,
         merchantId: null,
-        status: 'approved',
+        status: 'pending',
         // Yasal onay kayıtları — KVKK ispat yükümlülüğü için
         consents: {
           terms: true,

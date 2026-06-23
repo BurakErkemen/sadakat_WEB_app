@@ -16,7 +16,7 @@ export default function TermsPage() {
 
       <main className="max-w-3xl mx-auto px-5 py-10">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Kullanım Koşulları</h1>
-        <p className="text-sm text-gray-400 mb-8">Son güncelleme: Haziran 2025</p>
+        <p className="text-sm text-gray-400 mb-8">Son güncelleme: Haziran 2026</p>
 
         <div className="bg-white rounded-2xl border border-gray-100 p-8 space-y-6 text-sm text-gray-700 leading-relaxed">
 
@@ -56,8 +56,59 @@ export default function TermsPage() {
             <ul className="list-disc list-inside space-y-1 text-gray-600">
               <li>Ödemeler Shopier üzerinden güvenli şekilde alınır.</li>
               <li>Abonelik yenileme bildirimleri e-posta ile yapılır.</li>
-              <li>İptal talebi sonrasında mevcut dönem sonuna kadar erişim devam eder.</li>
-              <li>Ücretler iade edilmez; ancak anlaşmazlık durumunda Şirket takdir hakkını saklı tutar.</li>
+              <li>İptal talebi sonrasında mevcut dönem sonuna kadar erişim devam eder; yeni dönem başlamaz.</li>
+              <li>Plan yükseltme talepleri destek ekibi aracılığıyla işlenir; geçiş tarihinden önce kullanılmış süre ücretlendirilmeye devam eder.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="font-semibold text-gray-900 text-base mb-2">4A. İade ve Cayma Politikası</h2>
+
+            <p className="mb-3">
+              Sadex, işletmelere yönelik (B2B) bir SaaS platformudur. Platform üzerinden yapılan
+              abonelik satın alımları ticari amaçlı olup 6502 sayılı Tüketicinin Korunması Hakkında
+              Kanun kapsamındaki tüketici cayma hakları bu sözleşmeye uygulanmaz.
+            </p>
+
+            <p className="font-medium text-gray-800 mb-2">Genel İade Kuralı</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 mb-3">
+              <li>
+                Abonelik dönemi başladıktan sonra — kısmen de olsa kullanılmış olması halinde —
+                <strong className="text-gray-800"> iade yapılmaz.</strong>
+              </li>
+              <li>
+                Ödeme tamamlanıp hesap aktive edildikten itibaren hizmet teslim edilmiş sayılır;
+                Mesafeli Sözleşmeler Yönetmeliği madde 15/ğ uyarınca dijital içerik/hizmet
+                teslimata başlandığında cayma hakkı sona erer.
+              </li>
+              <li>
+                Bu koşullar satın alma ekranında açıkça sunulmakta ve ödeme öncesinde onay
+                alınmaktadır; söz konusu onay cayma hakkının kullanılamayacağının kabulü niteliğindedir.
+              </li>
+            </ul>
+
+            <p className="font-medium text-gray-800 mb-2">Plan Değişikliği</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 mb-3">
+              <li>Daha düşük bir plana geçmek istenmesi halinde geçmiş dönemlere ait ücretler iade edilmez.</li>
+              <li>Yükseltme taleplerinde yeni plan, ödeme onayının ardından aktive edilir; önceki plan ücreti mahsup edilmez.</li>
+              <li>Yıllık paketlerde kalan aylara orantılı kısmi iade yapılmaz.</li>
+            </ul>
+
+            <p className="font-medium text-gray-800 mb-2">İstisnai Durumlar</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-600">
+              <li>
+                Şirket kaynaklı teknik bir hata veya kesinti nedeniyle hizmetin <strong>7 takvim günü veya daha uzun süre</strong> kesintisiz
+                kullanılamaması durumunda Şirket, hizmet dışında kalınan süreyle orantılı kredi (sonraki dönemde mahsup) sağlayabilir.
+                Bu durum nakit iade hakkı doğurmaz.
+              </li>
+              <li>
+                İade talepleri yalnızca{' '}
+                <a href="mailto:info@cyandanismanlik.com" className="text-violet-600 hover:underline font-medium">
+                  info@cyandanismanlik.com
+                </a>{' '}
+                adresine yazılı olarak iletilmelidir; talep, ödeme tarihinden itibaren <strong>7 gün</strong> içinde
+                yapılmadıkça değerlendirmeye alınmaz.
+              </li>
             </ul>
           </section>
 

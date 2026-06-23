@@ -9,10 +9,11 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run --passWithNoTests",
-    "test:unit": "vitest run --passWithNoTests",
+    "test:unit": "vitest run src",
     "test:watch": "vitest",
-    "test:rules": "vitest run tests/rules --passWithNoTests",
+    "test:rules": "vitest run tests/rules",
     "test:rules:emulator": "firebase emulators:exec --only firestore \"npm run test:rules\"",
+    "test:ci": "npm run lint && npm run test:unit && npm run test:rules:emulator && npm run test:e2e && npm run build",
     "emulators": "firebase emulators:start --only firestore,auth,hosting",
     "test:e2e": "playwright test"
   },

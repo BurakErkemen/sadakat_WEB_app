@@ -6,7 +6,7 @@ import { auth } from '@/firebase/auth'
 import { useAuth } from './AuthContext'
 
 export default function VerifyEmailPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const navigate = useNavigate()
   const [resending, setResending] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -35,7 +35,10 @@ export default function VerifyEmailPage() {
       await user.reload()
       if (auth.currentUser?.emailVerified) {
         toast.success('E-posta doğrulandı!')
-        navigate('/onboarding', { replace: true })
+        const dest = profile?.status === 'pending' || profile?.status === 'rejected'
+          ? '/pending'
+          : '/onboarding'
+        navigate(dest, { replace: true })
       } else {
         toast.error('E-posta henüz doğrulanmadı. Gelen kutunuzu kontrol edin.')
       }

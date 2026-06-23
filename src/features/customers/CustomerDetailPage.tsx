@@ -30,6 +30,8 @@ export default function CustomerDetailPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [allMemberships, setAllMemberships] = useState<Membership[]>([])
   const [allCampaigns, setAllCampaigns] = useState<Campaign[]>([])
+  const [campaignMap, setCampaignMap] = useState<Map<string, Campaign>>(new Map())
+  const [selectedMembershipId, setSelectedMembershipId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [enrollCampaignId, setEnrollCampaignId] = useState('')
   const [enrolling, setEnrolling] = useState(false)
@@ -57,6 +59,12 @@ export default function CustomerDetailPage() {
   const [editNote, setEditNote] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editPhoneError, setEditPhoneError] = useState<string | null>(null)
+
+  function selectMembership(mem: Membership) {
+    setMembership(mem)
+    setSelectedMembershipId(mem.id)
+    setCampaign(campaignMap.get(mem.campaignId) ?? null)
+  }
 
   async function handleEnroll(e: React.FormEvent) {
     e.preventDefault()
@@ -161,13 +169,16 @@ export default function CustomerDetailPage() {
         setAllMemberships(mems)
         if (mems.length > 0) {
           setMembership(mems[0])
-          const campSnap = await getDoc(doc(db, 'merchants', merchant!.id, 'campaigns', mems[0].campaignId))
-          if (campSnap.exists()) setCampaign({ id: campSnap.id, ...campSnap.data() } as Campaign)
+          setSelectedMembershipId(mems[0].id)
         }
 
-        // Tüm kampanyalar
+        // Tüm kampanyalar — hem selector hem enroll için
         const campAllSnap = await getDocs(collection(db, 'merchants', merchant!.id, 'campaigns'))
-        setAllCampaigns(campAllSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign)))
+        const allCamps = campAllSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign))
+        setAllCampaigns(allCamps)
+        const cMap = new Map(allCamps.map((c) => [c.id, c]))
+        setCampaignMap(cMap)
+        if (mems.length > 0) setCampaign(cMap.get(mems[0].campaignId) ?? null)
 
         // İşlem geçmişi
         const txSnap = await getDocs(query(
@@ -295,6 +306,35 @@ export default function CustomerDetailPage() {
           </>
         )}
       </div>
+
+      {/* Çoklu kampanya seçici — birden fazla aktif üyelik varsa göster */}
+      {allMemberships.length > 1 && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-4">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Kampanya Seç</p>
+          <div className="flex flex-col gap-1.5">
+            {allMemberships.map((mem) => {
+              const camp = campaignMap.get(mem.campaignId)
+              const isSelected = selectedMembershipId === mem.id
+              return (
+                <button key={mem.id} onClick={() => selectMembership(mem)}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-colors ${
+                    isSelected
+                      ? 'border-indigo-300 bg-indigo-50 text-indigo-800 font-medium'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-indigo-200 hover:bg-indigo-50'
+                  }`}>
+                  <span className="font-medium">{camp?.name ?? '—'}</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {mem.currentStamps} / {camp?.requiredStamps ?? '?'} {camp?.type === 'points' ? 'puan' : 'damga'}
+                  </span>
+                  {mem.currentStamps >= (camp?.requiredStamps ?? Infinity) && (
+                    <span className="text-xs text-green-600 font-semibold ml-2">🎁 Ödül var</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Üyelik / Kart durumu */}
       {membership && campaign ? (

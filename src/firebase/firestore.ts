@@ -1,4 +1,4 @@
-import { getFirestore, writeBatch, runTransaction, doc, collection, query, where, getDocs, increment, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore'
+import { getFirestore, writeBatch, runTransaction, doc, collection, query, where, getDocs, increment, serverTimestamp, arrayUnion } from 'firebase/firestore'
 import { app } from './config'
 import { generateCardToken } from '@/lib/token'
 import { normalizePhone } from '@/lib/phone'
@@ -213,15 +213,23 @@ export async function activateCampaign(merchantId: string, campaignId: string, m
 }
 
 export async function deactivateCampaign(merchantId: string, campaignId: string) {
-  const batch = writeBatch(db)
-  batch.update(doc(db, 'merchants', merchantId, 'campaigns', campaignId), {
-    status: 'passive',
-    updatedAt: serverTimestamp(),
+  const merchantRef = doc(db, 'merchants', merchantId)
+  const campaignRef = doc(db, 'merchants', merchantId, 'campaigns', campaignId)
+
+  await runTransaction(db, async (tx) => {
+    const merchantSnap = await tx.get(merchantRef)
+    if (!merchantSnap.exists()) throw new Error('İşletme bulunamadı')
+
+    const currentIds: string[] = merchantSnap.data()['activeCampaignIds'] ?? []
+    const newIds = currentIds.filter((id) => id !== campaignId)
+    // Kalan aktif kampanyalardan ilkini pointer olarak ata; yoksa null
+    const newActiveCampaignId = newIds.length > 0 ? newIds[0] : null
+
+    tx.update(campaignRef, { status: 'passive', updatedAt: serverTimestamp() })
+    tx.update(merchantRef, {
+      activeCampaignIds: newIds,
+      activeCampaignId: newActiveCampaignId,
+      updatedAt: serverTimestamp(),
+    })
   })
-  batch.update(doc(db, 'merchants', merchantId), {
-    activeCampaignIds: arrayRemove(campaignId),
-    activeCampaignId: null,
-    updatedAt: serverTimestamp(),
-  })
-  await batch.commit()
 }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot } from 'firebase/firestore'
 import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
 import { PLAN_LIMITS, resolveLimit, type PlanKey } from '@/lib/constants'
@@ -27,19 +27,27 @@ export function MerchantSubProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const mid = profile?.merchantId
-    if (!mid) { setLoading(false); return }
+    if (!mid) { setMerchant(null); setSub(null); setLoading(false); return }
 
     setLoading(true)
-    Promise.all([
-      getDoc(doc(db, 'merchants', mid)).then((s) =>
-        s.exists() ? setMerchant({ id: s.id, ...s.data() } as Merchant) : null
-      ),
-      getDoc(doc(db, 'merchants', mid, 'subscription', 'current')).then((s) => {
-        if (s.exists()) setSub(s.data() as Subscription)
-      }),
-    ])
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    let firstSnap = true
+
+    const unsub = onSnapshot(
+      doc(db, 'merchants', mid),
+      (s) => {
+        setMerchant(s.exists() ? ({ id: s.id, ...s.data() } as Merchant) : null)
+        if (firstSnap) {
+          firstSnap = false
+          getDoc(doc(db, 'merchants', mid, 'subscription', 'current'))
+            .then((ss) => { if (ss.exists()) setSub(ss.data() as Subscription) })
+            .catch(console.error)
+            .finally(() => setLoading(false))
+        }
+      },
+      (err) => { console.error(err); setLoading(false) },
+    )
+
+    return unsub
   }, [profile?.merchantId])
 
   const plan = ((sub?.plan ?? 'trial') as PlanKey) in PLAN_LIMITS

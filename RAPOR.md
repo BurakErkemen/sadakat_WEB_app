@@ -1,231 +1,317 @@
-# DamgaKart Güncel Denetim Raporu
+# Sadex Production Öncesi Test Raporu
 
-Rapor tarihi: 18 Haziran 2026  
-Kapsam: Mevcut çalışma ağacı, `SPEC.md`, `README.md`, `DECISIONS.md`, Firebase Rules/Indexes, React kaynak kodu, `npm run build` ve `npm run lint` sonuçları.
+Rapor tarihi: 23 Haziran 2026  
+İnceleme rolü: Senior Test Engineer  
+Proje: `sadakat_WEB_app`  
+Kapsam: Claude tarafından yapılan son düzeltmeler, React uygulaması, Firebase Auth/Firestore kuralları, unit/rules/E2E testleri, build ve dependency güvenliği
 
-## 1. Genel Durum
+## 1. Yönetici Özeti
 
-Proje aktif geliştirme halinde. Çalışma ağacında çok sayıda değiştirilmiş ve yeni dosya var. Uygulama MVP kapsamını aşarak public işletme sayfası, destek talepleri, fiyatlandırma config'i, e-posta doğrulama, pending kullanıcı akışı, puan kampanyası ve plan bazlı çoklu aktif kampanya özelliklerini içeriyor.
+**Production kararı: NO-GO**
 
-Otomatik kontroller:
+Kod tabanı teknik kalite açısından iyi ilerlemiş durumda. Lint, unit testler, Firestore emulator testleri, Playwright E2E testleri, production build ve dependency audit başarıyla tamamlandı.
 
-- `npm run build`: başarılı.
-- `npm run lint`: başarılı.
-- Vite uyarısı: ana JS chunk yaklaşık `1.29 MB`; 500 kB üstü chunk uyarısı devam ediyor.
+Buna rağmen admin onay modelini doğrudan etkileyen bir yetkilendirme açığı var: `pending` kullanıcının merchant oluşturması Firestore kurallarında engellenmiyor. UI kullanıcıyı `/pending` sayfasına yönlendirse de doğrulanmış bir kullanıcı Firestore SDK/REST çağrısıyla merchant, slug ve trial aboneliği oluşturabilir. Production öncesi bu açık kapatılmalı.
 
-Sonuç: Proje derlenebilir ve lint temiz durumda. Kalan ana riskler iş mantığı, dokümantasyon tutarlılığı, emulator testi ve manuel akış doğrulamasında.
+İkinci önemli kalite riski, varsayılan `npm test` komutunun Firestore rules testlerini emulator yokken skip ederek başarılı görünmesi. CI yalnızca `npm test` çalıştırırsa güvenlik testleri gerçekte çalışmadan yeşil sonuç alınabilir.
 
-## 2. Mevcut Özellik Kapsamı
+## 2. Otomatik Test Sonuçları
 
-Mevcut route ve ekranlar:
+| Kontrol | Sonuç | Detay |
+|---|---|---|
+| `npm run lint` | PASS | Sıfır warning/error, `--max-warnings 0` |
+| `npm run test:unit` | PASS* | 11 test geçti, 10 rules testi emulator olmadığı için skip edildi |
+| `npm run test:rules:emulator` | PASS | Firestore Emulator üzerinde 10/10 test geçti |
+| `npm run test:e2e` | PASS | Chromium üzerinde 12/12 test geçti |
+| `npm run build` | PASS | TypeScript project build ve Vite production build başarılı |
+| `npm audit --omit=dev` | PASS | 0 vulnerability |
+| Java/Firebase CLI | PASS | Java 21, Firebase CLI 15.21.0 |
+| Hassas dosya Git kontrolü | PASS | `.env` ve `adminsdk.json` ignore ediliyor; Git geçmişinde izlenmiyor |
 
-- Public: `/`, `/login`, `/register`, `/forgot-password`, `/verify-email`, `/kvkk`, `/kullanim-kosullari`, `/gizlilik`, `/pending`.
-- Public kart: `/c/:cardToken`.
-- Public işletme: `/m/:slug`.
-- İşletmeci paneli: `/app`, kampanyalar, müşteri, müşteri detay, damga, ödül, işlemler, QR, abonelik, ayarlar, destek.
-- Admin paneli: `/yonetim`; eski `/admin` route'u `/yonetim` adresine yönleniyor.
+`PASS*`: Unit komutu rules testlerini çalıştırmıyor; skip ediyor. Güvenlik kapısı olarak tek başına yeterli değil.
 
-Servis katmanı:
+## 3. Release Blocker Bulgular
 
-- `createCustomerWithCard`: müşteri + üyelik + public kartı batch ile oluşturuyor.
-- `addStamp`: membership + public card + transaction kaydını batch ile güncelliyor.
-- `redeemReward`: ödül eşiğini transaction içinde kontrol ediyor.
-- `activateCampaign`: kampanya aktifleştiriyor.
-- `deactivateCampaign`: kampanyayı pasife alıyor.
+### P0 - Pending kullanıcı admin onayını Firestore üzerinden bypass edebilir
 
-## 3. Kapanan Eski Bulgular
+Dosyalar:
 
-Aşağıdaki önceki bulgular artık geçerli değil:
+- `firestore.rules:56-61`
+- `firestore.rules:83-91`
+- `src/routes/AppRouter.tsx:47-72`
+- `src/features/onboarding/OnboardingPage.tsx:85-128`
 
-- Build başarısızlığı yok; build başarılı.
-- Lint çalıştırılmadı bulgusu kapandı; `npm run lint` başarılı.
-- `transactions customerId + createdAt desc` composite index eksikliği kapandı; indeks `firestore.indexes.json` içinde mevcut.
-- `DECISIONS.md` artık `/m/:slug`, owner trial subscription create, owner merchant list, support ticket erişimi ve çoklu aktif kampanya kararlarını içeriyor.
-- `supportTickets` erişimi önceki geniş halinden daraltılmış; owner merchant eşleşmesi ve admin modeliyle tanımlı.
+UI tarafında `pending` ve `rejected` profiller `/pending` sayfasına gönderiliyor. Ancak Firestore kuralları merchant oluşturmak için yalnızca şunu kontrol ediyor:
 
-## 4. Mevcut Kritik Bulgular
+```text
+signedIn() && request.resource.data.ownerId == request.auth.uid
+```
 
-### 4.1 Müşteri Detayında Yanlış Kampanya Gösterilebilir
+Kural kullanıcının `users/{uid}.status == 'approved'` olduğunu veya e-postasının doğrulandığını kontrol etmiyor. Aynı kullanıcı daha sonra kendi merchant'ı için `publicSlugs` ve `subscription/current` oluşturabiliyor.
 
-Dosya: `src/features/customers/CustomerDetailPage.tsx`
+Ek bypass yolu:
 
-Kod aktif üyeliğin kendi kampanyasını göstermek yerine önce `merchant.activeCampaignId` değerini kullanıyor:
+- Firebase Auth hesabı oluşup profil `setDoc` işlemi başarısız olursa kullanıcı profili `null` kalabilir.
+- E-posta doğrulandıktan sonra `OnboardingGuard`, profil yokken onboarding ekranını render ediyor.
+- Firestore merchant create kuralı profil veya approval aramadığı için onboarding doğrudan çalışabilir.
 
-- Mevcut davranış: `const activeCampId = merchant!.activeCampaignId ?? mem.campaignId`
-- Beklenen davranış: müşteri üyeliği hangi kampanyaya aitse detay ekranında o kampanya gösterilmeli, yani `mem.campaignId` kullanılmalı.
+Etkisi:
 
-Risk:
-
-- Çoklu aktif kampanya modelinde müşteri A kampanyasına kayıtlıyken B kampanyasının adı/eşiği/progress değeri gösterilebilir.
-- Ödül hakkı ve ilerleme yüzdesi yanlış hesaplanabilir.
-- Kullanıcı yanlış kampanya üzerinden işlem yaptığını düşünebilir.
-
-Öncelik: P0.
-
-Önerilen düzeltme:
-
-- `CustomerDetailPage` içinde kampanya dokümanı doğrudan `mem.campaignId` ile okunmalı.
-- Birden fazla aktif membership varsa detay ekranı tek membership varsaymamalı; en azından ilgili üyelikleri listelemeli veya aktif kampanya seçimi yaptırmalı.
-
-### 4.2 Çoklu Aktif Kampanya Pasifleştirmede Legacy Pointer Tutarsızlaşıyor
-
-Dosya: `src/firebase/firestore.ts`
-
-`deactivateCampaign` fonksiyonu her pasifleştirmede şunu yazıyor:
-
-- `activeCampaignIds: arrayRemove(campaignId)`
-- `activeCampaignId: null`
-
-Risk:
-
-- Standart/Pro planlarda birden fazla aktif kampanya varken yalnızca bir kampanya pasife alınsa bile `activeCampaignId` tamamen boşalıyor.
-- Kodun bazı yerleri hâlâ `activeCampaignId` fallback'i kullandığı için merchant dokümanında tutarsız durum oluşuyor.
-
-Öncelik: P0.
+- Admin onaylı aktivasyon modeli güvenlik katmanında uygulanmıyor.
+- Pending/rejected kullanıcı ücretli/işletmeci akışına doğrudan girebilir.
+- UI koruması güvenlik kontrolü gibi davranıyor; doğrudan API çağrısı bunu atlıyor.
 
 Önerilen düzeltme:
 
-- `deactivateCampaign` transaction ile merchant dokümanını okumalı.
-- `activeCampaignIds` listesinden çıkarma sonrası kalan ilk aktif kampanya `activeCampaignId` olarak yazılmalı.
-- Kalan aktif kampanya yoksa `activeCampaignId: null` olmalı.
+1. `isApprovedUser()` helper'ı ekleyin ve merchant create için zorunlu tutun.
+2. Gerekirse `request.auth.token.email_verified == true` kontrolü ekleyin.
+3. `publicSlugs` ve trial subscription create kurallarında da approved owner şartını doğrulayın.
+4. Emulator testlerine pending, rejected, profile-missing ve unverified kullanıcı senaryoları ekleyin.
 
-### 4.3 README İçinde Abonelik Erişimi Çelişkili
+### P0 - Varsayılan test komutu güvenlik testleri çalışmadan yeşil oluyor
 
-Dosya: `README.md`
+Dosyalar:
 
-README içinde aynı path iki farklı şekilde anlatılıyor:
+- `package.json:9-14`
+- `tests/rules/firestore.rules.test.ts:18-19`
 
-- Bir satırda `subscription/current` için owner'ın sadece trial create edebileceği yazıyor.
-- Başka satırda aynı path için write sadece admin deniyor.
+`npm test` / `npm run test:unit`, emulator ortam değişkeni yoksa rules suite'ini `describe.skip` ile atlıyor. Ayrıca komutlarda `--passWithNoTests` kullanılıyor.
 
-Risk:
+Gözlenen sonuç:
 
-- Yeni geliştirici veya deploy öncesi kontrol yapan kişi gerçek Rules davranışını yanlış anlayabilir.
-- `DECISIONS.md` ile README arasında kısmi uyumsuzluk kalır.
+```text
+Test Files  4 passed | 1 skipped
+Tests       11 passed | 10 skipped
+exit code   0
+```
 
-Öncelik: P1.
+Bu yapı CI'da yanıltıcı bir yeşil sonuç üretir. Firestore rules bu ürünün tenant izolasyonu ve PII güvenliği için ana kontrol katmanıdır; rules testleri opsiyonel olmamalı.
 
 Önerilen düzeltme:
 
-- Eski `read: owner/admin; write: sadece admin` satırı kaldırılmalı veya `create: owner sadece trial; update/delete: admin` şeklinde tekilleştirilmeli.
+- CI `test` script'ini unit + rules emulator + E2E olarak birleştirin.
+- `test:rules` emulator olmadan çalıştırılırsa açık hata versin; skip etmesin.
+- Kritik test komutlarından `--passWithNoTests` seçeneğini kaldırın.
+- CI workflow'a `npm run lint`, `npm run test:unit`, `npm run test:rules:emulator`, `npm run test:e2e`, `npm run build` adımlarını ekleyin.
 
-## 5. Firestore Rules Durumu
+## 4. Yüksek Öncelikli Bulgular
 
-Güçlü taraflar:
+### P1 - Plan limitleri yalnızca UI seviyesinde
 
-- `publicCards` public `get` açık, `list` kapalı.
-- `customers`, `memberships`, `transactions` owner/admin ile sınırlı.
-- `transactions` update/delete kapalı.
-- `publicCards` update sırasında `merchantId`, `campaignId`, `membershipId` kilitli.
-- `supportTickets` create/get/list owner merchant eşleşmesine veya admin'e bağlı.
-- `config` public get, admin write modeli fiyatlandırma için uygun.
+Kaynaklar:
 
-Kalan doğrulama ihtiyacı:
+- `README.md` mimari notları
+- `src/hooks/usePlanLimits.ts`
+- `firestore.rules:56-80`
 
-- Firestore Rules emulator testleri yok.
-- Owner'ın başka merchant verilerine erişemediği testle kanıtlanmamış.
-- Support ticket list/get kuralları emulator ile doğrulanmamış.
-- Owner trial subscription create ve update/delete ayrımı emulator ile doğrulanmamış.
+Müşteri, işlem ve kampanya limitleri Firestore rules veya trusted backend tarafından enforce edilmiyor. Merchant owner doğrudan Firestore çağrısıyla UI limitlerini aşabilir.
 
-Öncelik: P1.
+Etkisi:
 
-## 6. Firestore Index Durumu
+- Trial/Mini/Standart planların ticari sınırları teknik olarak uygulanmıyor.
+- Ücretlendirme ile gerçek kullanım arasında uyuşmazlık oluşabilir.
+- Kötüye kullanım Firestore maliyetini artırabilir.
 
-`firestore.indexes.json` içinde görülen indeksler:
+Production ücretli trafik öncesi hard enforcement önerilir. MVP riski olarak kabul edilecekse ürün, satış ve operasyon tarafından yazılı kabul edilmelidir.
 
-- `transactions`: `customerId ASC`, `createdAt DESC`
-- `memberships`: `customerId ASC`, `status ASC`
-- `supportTickets`: `merchantId ASC`, `createdAt DESC`
+### P1 - Onboarding dört ayrı yazma işlemiyle atomik değil
 
-Önceki transaction composite index eksikliği kapandı.
+Dosya: `src/features/onboarding/OnboardingPage.tsx:76-128`
 
-Kalan yapılacak:
+Onboarding sırasıyla merchant, user pointer, public slug ve trial subscription yazıyor. İşlemler batch/transaction içinde değil.
 
-- Canlı Firestore veya emulator üzerinde tüm sorgu akışları denenmeli.
-- Yeni sorgular eklendikçe hata linklerinden indeks dosyası güncellenmeli.
+Olası yarım durumlar:
 
-## 7. Dokümantasyon Durumu
+- Merchant oluşur, user pointer yazılamaz.
+- Merchant ve pointer oluşur, slug yazılamaz.
+- Slug oluşur, subscription oluşturulamaz.
+- İki kullanıcı aynı slug için yarıştığında biri orphan merchant ile kalabilir.
 
-Güncel ve iyi taraflar:
+Mevcut recovery yalnızca kullanıcının merchant'ını tekrar bağlamaya odaklı; eksik slug/subscription durumlarını tamir etmiyor.
 
-- `DECISIONS.md`, çoklu aktif kampanya kararını içeriyor.
-- `DECISIONS.md`, owner trial subscription create kararını içeriyor.
-- `DECISIONS.md`, support ticket erişim modelini içeriyor.
-- `README.md`, public işletme sayfası ve plan bazlı çoklu aktif kampanya bilgisini büyük ölçüde içeriyor.
+Öneri:
 
-Kalan eksik:
+- Mümkün olan yazımları transaction/batch içinde birleştirin.
+- Slug rezervasyonunu atomik yapın.
+- Recovery akışında merchant, slug ve subscription bütünlüğünü doğrulayın.
+- Failure injection testleri ekleyin.
 
-- README abonelik erişim tablosunda çelişkili satır var.
-- README manuel testlerinde owner'ın sadece trial create edebilmesi ayrıca test maddesi olarak netleşebilir.
+### P1 - Inactivity logout sekmeler arasında senkron değil
 
-## 8. Ürün ve UX Doğrulama Eksikleri
+Dosya: `src/hooks/useInactivityLogout.ts:11-50`
 
-Manuel olarak doğrulanması gereken akışlar:
+Yeni timestamp yaklaşımı arka planda geçen süreyi doğru sayıyor. Ancak `lastActivityAt` yalnızca sekme içindeki React ref'inde tutuluyor.
 
-- Public kart yok/pasif/aktif durumları.
-- Public işletme sayfasında aktif kampanyaların doğru listelenmesi.
-- QR okuma ve QR üretme.
-- Çoklu aktif kampanyada müşteri oluşturma, damga ekleme ve ödül kullandırma.
-- Trial süresi bitmiş/canceled/past_due abonelik kilidi.
-- Destek talebi oluşturma ve admin yanıtı.
-- Admin UID'nin frontend `.env` ve Firestore Rules tarafında senkron olması.
+Senaryo:
 
-## 9. Test Durumu
+1. Kullanıcı A sekmesinde aktif çalışıyor.
+2. B sekmesi bir saat boyunca pasif kalıyor.
+3. B sekmesi timeout olup Firebase `signOut` çağırıyor.
+4. Auth state sekmeler arasında senkron olduğu için aktif A sekmesi de oturumdan düşebilir.
 
-Geçen kontroller:
+Öneri:
 
-- `npm run build`
-- `npm run lint`
+- Aktivite timestamp'ini `localStorage` veya `BroadcastChannel` ile sekmeler arasında paylaşın.
+- Logout'u tüm sekmelerin ortak son aktivitesine göre hesaplayın.
+- Fake timer + storage/BroadcastChannel testleri ekleyin.
 
-Eksikler:
+### P1 - Firestore rules kapsamı ürün yüzeyine göre yetersiz
 
-- Unit test yok.
-- Component test yok.
-- Firestore Rules emulator testi yok.
-- E2E/smoke test yok.
+Dosya: `tests/rules/firestore.rules.test.ts`
 
-Minimum önerilen test planı:
+10 rules testi geçiyor fakat aşağıdaki kritik alanlar kapsanmıyor:
 
-1. Firebase emulator rules testleri.
-2. Register/login/onboarding manuel testi.
-3. Kampanya oluştur/aktif et/pasife al testi.
-4. Çoklu aktif kampanya testi.
-5. Müşteri oluşturma ve public kart testi.
-6. Damga ve ödül transaction testi.
-7. Admin plan/status/destek yönetimi testi.
+- Pending/rejected/unverified kullanıcının merchant oluşturması.
+- Cross-tenant merchant, campaign, customer, membership ve transaction erişimi.
+- Merchant owner'ın başka merchant'a yazması.
+- Public campaign get/list ayrımı.
+- `paymentConsents` immutability ve zorunlu alanları.
+- Transaction update/delete ve sahte transaction alanları.
+- Public slug yarış ve sahiplik senaryoları.
+- Merchant owner'ın subscription plan/status yükseltme denemeleri için farklı payload'lar.
 
-## 10. Önceliklendirilmiş Yapılacaklar
+Rules test matrisi koleksiyon x rol x operasyon tablosuyla genişletilmeli.
 
-P0 - Kritik:
+## 5. Orta Öncelikli Bulgular
 
-1. `CustomerDetailPage` kampanya seçim bug'ını düzelt.
-2. `deactivateCampaign` içinde `activeCampaignId` pointer'ını kalan aktif kampanyaya göre güncelle.
+### P2 - E2E kapsamı gerçek ürün akışlarını test etmiyor
 
-P1 - Güvenilirlik:
+Dosyalar:
 
-1. README abonelik erişim çelişkisini temizle.
-2. Firestore Rules emulator testlerini yaz ve çalıştır.
-3. Çoklu aktif kampanya akışlarını manuel test et.
-4. Public kart ve QR akışlarını mobil tarayıcıda doğrula.
+- `tests/e2e/public.spec.ts`
+- `tests/e2e/auth.spec.ts`
 
-P2 - Performans ve Bakım:
+12 test geçiyor ancak çoğu smoke/redirect kontrolü. Landing testi yalnızca body'nin boş olmadığını kontrol ediyor. Invalid card/merchant testleri de yalnızca body'nin boş olmamasını ve `undefined` yazmamasını doğruluyor.
 
-1. Route bazlı code splitting ekle.
-2. Büyük bundle uyarısını azalt.
-3. Temel test altyapısı ekle.
-4. Deploy checklist oluştur.
+Eksik ana akışlar:
 
-## 11. Yayına Hazırlık Değerlendirmesi
+- Kayıt -> e-posta doğrulama -> pending -> admin approve -> onboarding.
+- Merchant oluşturma ve slug çakışması.
+- Kampanya oluşturma/aktif-pasif geçişi.
+- Müşteri oluşturma ve duplicate telefon kontrolü.
+- Damga/puan ekleme ve ödül kullandırma.
+- Public kartta güncel bakiyenin görünmesi.
+- Plan talebi ve payment consent kaydı.
+- Admin kullanıcı/merchant/subscription/support yönetimi.
+- Mobil viewport ve QR scanner fallback.
 
-Durum: Staging için yakın, production için henüz hazır değil.
+Auth + Firestore emulator ile seed'li E2E projesi önerilir.
 
-Neden:
+### P2 - Admin yetkisi iki ayrı kaynaktan yönetiliyor
 
-- Build ve lint başarılı.
-- İndeks dosyasında bilinen transaction composite index mevcut.
-- Kritik MVP akışları kodda mevcut.
-- Ancak iki P0 iş mantığı bug'ı var.
-- Firestore Rules emulator testleri yok.
-- Çoklu aktif kampanya akışı manuel olarak doğrulanmamış.
+Dosyalar:
 
-Sonuç: Önce iki P0 bug düzeltilmeli. Ardından emulator rules testleri ve manuel smoke test ile staging deploy yapılabilir.
+- `firestore.rules:7-10`
+- `src/lib/constants.ts:65`
+- `.env.example`
+- `DEPLOY.md`
+
+Firestore rules UID'yi hardcode ediyor; frontend `VITE_ADMIN_UIDS` kullanıyor. İki liste ayrışırsa:
+
+- Gerçek admin UI'ı göremeyebilir ama rules yetkisi olabilir.
+- UI admin görünen kullanıcı Firestore'da yetkisiz olabilir.
+
+Bu doğrudan veri sızıntısı yaratmaz çünkü rules son otoritedir, ancak production operasyonunu kırabilir. Custom claims tek kaynak olarak tercih edilmelidir.
+
+### P2 - Payment consent kuralları hukuki kayıt şemasını doğrulamıyor
+
+Dosyalar:
+
+- `firestore.rules:94-100`
+- `src/features/subscription/SubscriptionPage.tsx:73-91`
+
+Kural yalnızca `merchantId` ve `userId` eşleşmesini doğruluyor. `planId`, `billingCycle`, `displayedPrice`, `acceptedTermsVersion`, `acceptedAt` ve `actionType` alanları zorunlu veya tip kontrollü değil.
+
+Kayıt immutable olsa da eksik/yanlış payload hukuki kanıt değerini düşürür. `hasOnly/hasAll`, enum, number ve timestamp kontrolleri eklenmeli.
+
+### P2 - Auth/profile null durumu açıkça ele alınmıyor
+
+Dosyalar:
+
+- `src/features/auth/AuthContext.tsx:31-39`
+- `src/routes/AppRouter.tsx:47-72`
+
+Authenticated kullanıcının `users/{uid}` profili yoksa `profile` null oluyor. Guard'lar bu durumu hata/recovery olarak ele almak yerine onboarding veya uygulama kabuğuna geçebilir.
+
+Öneri:
+
+- Profile missing için ayrı bir auth state tanımlayın.
+- Kullanıcıyı güvenli profile repair/logout ekranına yönlendirin.
+- Profile read permission/network hata durumunu “profil yok” ile aynı state'te tutmayın.
+
+### P2 - Rules admin testi gerçek environment uyumunu doğrulamıyor
+
+Dosya: `tests/rules/firestore.rules.test.ts:234-249`
+
+Test hardcoded UID ile admin update'i doğruluyor. Frontend `VITE_ADMIN_UIDS` değerinin aynı UID'yi içerdiği test edilmiyor. Deployment config drift CI'da yakalanmıyor.
+
+## 6. Düşük Öncelikli Bulgular
+
+### P3 - E2E yalnızca Desktop Chrome çalıştırıyor
+
+Dosya: `playwright.config.ts:17-22`
+
+Ürün mobil-first olarak tanımlanmasına rağmen mobil viewport/WebKit testi yok. En az Pixel 7 ve iPhone 13 viewport projesi eklenmeli.
+
+### P3 - Rules emulator test çıktısı gereksiz gürültülü
+
+Beklenen `assertFails` çağrıları emulator logunda uzun permission stack trace'leri üretiyor. Testler geçiyor ancak CI log okunabilirliği düşüyor. Firebase debug logging azaltılabilir.
+
+### P3 - Test artifacts ve TypeScript build info temizliği
+
+`tsconfig.test.tsbuildinfo` untracked durumda. Build/test artifact'leri `.gitignore` altında tutulmalı. Çalışma ağacında yanlışlıkla commit edilmemeli.
+
+## 7. Doğrulanan Claude Düzeltmeleri
+
+Aşağıdaki değişiklikler kod ve testlerle doğrulandı:
+
+- Yeni kayıtlar `approved` yerine `pending` oluşturuluyor.
+- Kullanıcı kendi `status` alanını güncelleyemiyor.
+- Kullanıcı başka sahibin merchantId'sini profiline yazamıyor.
+- Normal kullanıcı e-posta doğrulamadan protected route'a giremiyor.
+- Pending/rejected kullanıcı doğrulama sonrası `/pending` ekranına yönleniyor.
+- Subscription update/delete yalnızca admin tarafından yapılabiliyor.
+- Public card get açık, list kapalı.
+- Support ticket tenant izolasyonu testten geçiyor.
+- Kampanya pasifleştirme transaction ile kalan aktif pointer'ı koruyor.
+- Lint gate temizlendi.
+- Dependency audit temiz.
+- `adminsdk.json` ve `.env` Git tarafından ignore ediliyor ve geçmişte izlenmemiş.
+
+## 8. Test Kapsam Özeti
+
+### Unit testler
+
+- 11 test geçti.
+- Phone, slug, token ve utility fonksiyonları kapsanıyor.
+
+### Firestore rules testleri
+
+- Emulator üzerinde 10 test geçti.
+- Temel public card, subscription, support ticket ve user profile kontrolleri mevcut.
+- Tenant ve approval matrisi genişletilmeli.
+
+### E2E testleri
+
+- 12 Chromium testi geçti.
+- Public render, unauthenticated redirect, kayıt checkbox'ları, legal linkler ve invalid public route smoke kontrolleri mevcut.
+- Authenticated iş akışları kapsanmıyor.
+
+## 9. Zorunlu Production Checklist
+
+1. Pending/rejected/profile-missing kullanıcıların merchant oluşturmasını Firestore rules seviyesinde engelle.
+2. Varsayılan CI test komutunda rules emulator testlerini zorunlu çalıştır.
+3. Plan limitleri için hard enforcement kararı ver ve kritik limitleri backend/rules ile uygula.
+4. Onboarding yazımlarını atomik hale getir veya tam recovery mekanizması ekle.
+5. Inactivity logout'u sekmeler arasında senkronize et.
+6. Rules test matrisini tenant izolasyonu ve approval bypass senaryolarıyla genişlet.
+7. Authenticated emulator E2E akışlarını ekle.
+8. Payment consent şemasını rules seviyesinde doğrula.
+9. Admin UID yapılandırmasını tek kaynağa taşı.
+10. Mobil Playwright projelerini CI'a ekle.
+
+## 10. Nihai Karar
+
+**NO-GO for production.**
+
+Staging/demo için mevcut yapı güçlü ve otomatik kapılar yeşil. Ancak admin approval bypass güvenlik açığı kapanmadan production kullanıcı kaydı açılmamalı. Bu düzeltmeden sonra rules emulator ve authenticated E2E testleri yeniden çalıştırılarak release kararı güncellenmeli.

@@ -7,8 +7,12 @@ import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { formatDate, formatDateTime } from '@/lib/dates'
 import type { Merchant, Subscription, SupportTicket, UserProfile, Campaign } from '@/types'
+import AdminMerchantReport from './AdminMerchantReport'
+import AdminAuditTab from './AdminAuditTab'
+import AdminFinanceTab from './AdminFinanceTab'
+import { recordAdminAction } from './adminAudit'
 
-type Tab = 'merchants' | 'pricing' | 'support' | 'users'
+type Tab = 'merchants' | 'pricing' | 'support' | 'users' | 'finance' | 'audit'
 
 // ─── Plan tanımları (label, limitler) ────────────────────────────────────────
 const PLAN_META = [
@@ -46,7 +50,7 @@ type PlanData = {
 function TabBtn({ tab, active, label, badge, onClick }: { tab: Tab; active: Tab; label: string; badge?: number; onClick: (t: Tab) => void }) {
   return (
     <button onClick={() => onClick(tab)}
-      className={`flex-1 py-2.5 text-sm font-medium rounded-xl transition-colors relative ${active === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+      className={`min-w-0 py-2.5 px-1 text-xs sm:text-sm font-medium rounded-lg transition-colors relative ${active === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
       {label}
       {badge != null && badge > 0 && (
         <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
@@ -79,17 +83,21 @@ export default function AdminPage() {
   }, [])
 
   return (
-    <div className="space-y-5">
-      <div className="bg-white rounded-2xl border border-gray-200 p-1 flex gap-1">
+    <div className="space-y-4 sm:space-y-5 min-w-0">
+      <div className="bg-white rounded-xl border border-gray-200 p-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 sticky top-[57px] z-[5]">
         <TabBtn tab="merchants" active={tab} label="İşletmeler" onClick={setTab} />
         <TabBtn tab="users" active={tab} label="Üyeler" badge={pendingApps} onClick={setTab} />
         <TabBtn tab="pricing" active={tab} label="Fiyatlandırma" onClick={setTab} />
+        <TabBtn tab="finance" active={tab} label="Finans" onClick={setTab} />
+        <TabBtn tab="audit" active={tab} label="Loglar" onClick={setTab} />
         <TabBtn tab="support" active={tab} label="Destek" badge={openTickets} onClick={setTab} />
       </div>
 
       {tab === 'merchants' && <MerchantsTab />}
       {tab === 'users' && <UsersTab onCountChange={setPendingApps} />}
       {tab === 'pricing' && <PricingTab />}
+      {tab === 'finance' && <AdminFinanceTab />}
+      {tab === 'audit' && <AdminAuditTab />}
       {tab === 'support' && <SupportTab onCountChange={setOpenTickets} />}
     </div>
   )
@@ -104,6 +112,7 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [approvingId, setApprovingId] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -141,11 +150,23 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load() }, [])
 
+  async function setUserStatus(u: UserRow, status: 'approved' | 'rejected') {
+    setApprovingId(u.id + status)
+    try {
+      await updateDoc(doc(db, 'users', u.id), { status, updatedAt: serverTimestamp() })
+      await recordAdminAction({ action: 'user.status_changed', targetType: 'user', targetId: u.id, merchantId: u.merchantId, summary: `${u.displayName || u.email} kullanıcısının durumu ${status} olarak değiştirildi`, metadata: { status } })
+      setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, status } : x))
+      toast.success(status === 'approved' ? 'Kullanıcı onaylandı' : 'Kullanıcı reddedildi')
+    } catch (err) { console.error(err); toast.error('İşlem başarısız') }
+    finally { setApprovingId(null) }
+  }
+
   async function deleteUser(u: UserRow) {
     if (!confirm(`"${u.displayName}" kullanıcısını silmek istediğinize emin misiniz?\nBu işlem geri alınamaz.`)) return
     setDeletingId(u.id)
     try {
       await deleteDoc(doc(db, 'users', u.id))
+      await recordAdminAction({ action: 'user.deleted', targetType: 'user', targetId: u.id, merchantId: u.merchantId, summary: `${u.displayName || u.email} kullanıcısı silindi` })
       toast.success('Kullanıcı silindi')
       setUsers((prev) => prev.filter((x) => x.id !== u.id))
     } catch (err) { console.error(err); toast.error('Silinemedi') }
@@ -162,10 +183,10 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <p className="text-sm text-gray-500">{users.length} kullanıcı</p>
         <input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40" />
+          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-56" />
       </div>
 
       <div className="space-y-2">
@@ -178,7 +199,7 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
 
           return (
             <div key={u.id} className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-semibold text-gray-900 text-sm">{u.displayName ?? <span className="text-gray-400 font-normal">—</span>}</p>
@@ -190,7 +211,7 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                   </p>
                 </div>
 
-                <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex flex-row flex-wrap sm:flex-col sm:items-end gap-1 shrink-0">
                   <button
                     disabled={deletingId === u.id}
                     onClick={() => void deleteUser(u)}
@@ -207,6 +228,34 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                   }`}>
                     {u.status === 'approved' ? 'Aktif' : u.status === 'rejected' ? 'Reddedildi' : 'Bekliyor'}
                   </span>
+                  {/* Onay / Red butonları */}
+                  {u.status === 'pending' && (
+                    <>
+                      <button
+                        disabled={!!approvingId}
+                        onClick={() => void setUserStatus(u, 'approved')}
+                        className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-40 transition-colors"
+                      >
+                        {approvingId === u.id + 'approved' ? '…' : '✓ Onayla'}
+                      </button>
+                      <button
+                        disabled={!!approvingId}
+                        onClick={() => void setUserStatus(u, 'rejected')}
+                        className="text-xs px-2 py-0.5 rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40 transition-colors"
+                      >
+                        {approvingId === u.id + 'rejected' ? '…' : '✕ Reddet'}
+                      </button>
+                    </>
+                  )}
+                  {u.status === 'rejected' && (
+                    <button
+                      disabled={!!approvingId}
+                      onClick={() => void setUserStatus(u, 'approved')}
+                      className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-40 transition-colors"
+                    >
+                      {approvingId === u.id + 'approved' ? '…' : '↩ Yeniden Onayla'}
+                    </button>
+                  )}
 
                   {/* İşletme / abonelik durumu */}
                   {u.merchantId ? (
@@ -247,16 +296,22 @@ const PLAN_LABEL: Record<string, string> = { trial: 'Deneme', mini: 'Mini', stan
 const SUB_STATUS_LABEL: Record<string, string> = { active: 'Aktif', trialing: 'Deneme', canceled: 'İptal', past_due: 'Gecikmiş' }
 
 // Açılır detay paneli — owner email + kampanyalar
-function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusChange }: {
+function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusChange, onLocationUpdate }: {
   merchant: MerchantRow
   subscription?: Subscription
   onPlanChange: (plan: string, cycle: 'monthly' | 'yearly' | null) => Promise<void>
   onStatusChange: (status: 'active' | 'passive') => Promise<void>
+  onLocationUpdate: (sector: string, city: string, district: string) => void
 }) {
   const [ownerEmail, setOwnerEmail] = useState<string | null>(null)
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [loadingDetail, setLoadingDetail] = useState(true)
   const [actionId, setActionId] = useState<string | null>(null)
+  const [editingLocation, setEditingLocation] = useState(false)
+  const [editSector, setEditSector] = useState(merchant.sector)
+  const [editCity, setEditCity] = useState(merchant.city)
+  const [editDistrict, setEditDistrict] = useState(merchant.district)
+  const [savingLocation, setSavingLocation] = useState(false)
 
   useEffect(() => {
     setLoadingDetail(true)
@@ -275,9 +330,35 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
     try {
       const next = c.status === 'active' ? 'passive' : 'active'
       await updateDoc(doc(db, 'merchants', merchant.id, 'campaigns', c.id), { status: next, updatedAt: serverTimestamp() })
+      await recordAdminAction({ action: 'campaign.status_changed', targetType: 'campaign', targetId: c.id, merchantId: merchant.id, summary: `${merchant.name} / ${c.name} kampanyası ${next} yapıldı`, metadata: { status: next } })
       setCampaigns((prev) => prev.map((x) => x.id === c.id ? { ...x, status: next } : x))
     } catch (err) { console.error(err); toast.error('İşlem başarısız') }
     finally { setActionId(null) }
+  }
+
+  async function saveLocation() {
+    if (!editSector.trim() || !editCity.trim() || !editDistrict.trim()) {
+      toast.error('Tüm alanları doldurun')
+      return
+    }
+    setSavingLocation(true)
+    try {
+      await updateDoc(doc(db, 'merchants', merchant.id), {
+        sector: editSector.trim(),
+        city: editCity.trim(),
+        district: editDistrict.trim(),
+        updatedAt: serverTimestamp(),
+      })
+      await recordAdminAction({ action: 'merchant.location_changed', targetType: 'merchant', targetId: merchant.id, merchantId: merchant.id, summary: `${merchant.name} konum bilgileri güncellendi`, metadata: { sector: editSector.trim(), city: editCity.trim(), district: editDistrict.trim() } })
+      onLocationUpdate(editSector.trim(), editCity.trim(), editDistrict.trim())
+      setEditingLocation(false)
+      toast.success('Konum bilgileri güncellendi')
+    } catch (err) {
+      console.error(err)
+      toast.error('Güncelleme başarısız')
+    } finally {
+      setSavingLocation(false)
+    }
   }
 
   async function deleteCampaign(c: CampaignRow) {
@@ -285,6 +366,7 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
     setActionId(c.id + 'del')
     try {
       await deleteDoc(doc(db, 'merchants', merchant.id, 'campaigns', c.id))
+      await recordAdminAction({ action: 'campaign.deleted', targetType: 'campaign', targetId: c.id, merchantId: merchant.id, summary: `${merchant.name} / ${c.name} kampanyası silindi` })
       setCampaigns((prev) => prev.filter((x) => x.id !== c.id))
       toast.success('Kampanya silindi')
     } catch (err) { console.error(err); toast.error('Silinemedi') }
@@ -300,24 +382,57 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
       {loadingDetail ? (
         <div className="h-20 bg-gray-100 rounded-lg animate-pulse" />
       ) : (
-        <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+        <div className="bg-gray-50 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
           {ownerEmail && (
-            <div className="col-span-2 flex items-center gap-1.5 text-gray-700">
+            <div className="sm:col-span-2 flex items-center gap-1.5 text-gray-700">
               <span>✉️</span>
               <a href={`mailto:${ownerEmail}`} className="hover:underline truncate">{ownerEmail}</a>
             </div>
           )}
           <div className="flex items-center gap-1.5 text-gray-600"><span>📞</span>{merchant.phone}</div>
-          <div className="flex items-center gap-1.5 text-gray-600"><span>🏪</span>{merchant.sector}</div>
-          <div className="flex items-center gap-1.5 text-gray-600 col-span-2"><span>📍</span>{merchant.city}, {merchant.district}</div>
-          <div className="flex items-center gap-1.5 text-gray-600 col-span-2">
+          <div className="sm:col-span-2 flex items-start justify-between gap-2">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 text-gray-600"><span>🏪</span>{merchant.sector}</div>
+              <div className="flex items-center gap-1.5 text-gray-600"><span>📍</span>{merchant.city}, {merchant.district}</div>
+            </div>
+            <button onClick={() => setEditingLocation((v) => !v)}
+              className="text-indigo-500 hover:text-indigo-700 text-xs underline shrink-0">
+              {editingLocation ? 'İptal' : 'Düzenle'}
+            </button>
+          </div>
+          {editingLocation && (
+            <div className="sm:col-span-2 space-y-2 pt-1">
+              <input
+                value={editSector} onChange={(e) => setEditSector(e.target.value)}
+                placeholder="Sektör"
+                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  value={editCity} onChange={(e) => setEditCity(e.target.value)}
+                  placeholder="Şehir"
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <input
+                  value={editDistrict} onChange={(e) => setEditDistrict(e.target.value)}
+                  placeholder="İlçe"
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              <button onClick={() => void saveLocation()} disabled={savingLocation}
+                className="w-full bg-indigo-600 text-white text-xs py-1.5 rounded-lg disabled:opacity-50">
+                {savingLocation ? 'Kaydediliyor…' : 'Kaydet'}
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-gray-600 sm:col-span-2 min-w-0">
             <span>🔗</span>
             <a href={`/m/${merchant.slug}`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
               /m/{merchant.slug}
             </a>
           </div>
           {merchant.instagram && (
-            <div className="flex items-center gap-1.5 text-gray-600 col-span-2">
+            <div className="flex items-center gap-1.5 text-gray-600 sm:col-span-2 min-w-0">
               <span>📷</span>
               <a href={`https://instagram.com/${merchant.instagram.replace(/^@/, '')}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
                 @{merchant.instagram.replace(/^@/, '')}
@@ -400,14 +515,14 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
         ) : (
           <div className="space-y-1.5">
             {campaigns.map((c) => (
-              <div key={c.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+              <div key={c.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-50 rounded-lg px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
                   <p className="text-xs text-gray-400">
                     {c.type === 'stamp' ? 'Damga' : 'Puan'} · {c.requiredStamps} hedef
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                <div className="flex items-center gap-1.5 sm:ml-2 shrink-0 self-end sm:self-auto">
                   <button
                     disabled={actionId === c.id}
                     onClick={() => void toggleCampaign(c)}
@@ -473,6 +588,8 @@ function MerchantsTab() {
         currentPeriodEnd: Timestamp.fromMillis(now.toMillis() + days * 24 * 3600 * 1000),
         updatedAt: serverTimestamp(),
       }, { merge: true })
+      const merchantName = merchants.find((item) => item.id === merchantId)?.name ?? merchantId
+      await recordAdminAction({ action: 'merchant.plan_changed', targetType: 'merchant', targetId: merchantId, merchantId, summary: `${merchantName} planı ${plan} olarak değiştirildi`, metadata: { plan, billingCycle } })
       toast.success(`Plan güncellendi: ${plan}${billingCycle ? ` (${billingCycle === 'yearly' ? 'yıllık' : 'aylık'})` : ''}`)
       await load()
     } catch (err) { console.error(err); toast.error('Güncelleme başarısız') }
@@ -481,6 +598,8 @@ function MerchantsTab() {
   async function setStatus(merchantId: string, status: 'active' | 'passive') {
     try {
       await updateDoc(doc(db, 'merchants', merchantId), { status, updatedAt: serverTimestamp() })
+      const merchantName = merchants.find((item) => item.id === merchantId)?.name ?? merchantId
+      await recordAdminAction({ action: 'merchant.status_changed', targetType: 'merchant', targetId: merchantId, merchantId, summary: `${merchantName} işletmesi ${status} yapıldı`, metadata: { status } })
       toast.success(`İşletme ${status === 'active' ? 'aktif' : 'pasif'} edildi`)
       await load()
     } catch (err) { console.error(err); toast.error('İşlem başarısız') }
@@ -506,10 +625,10 @@ function MerchantsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <p className="text-sm text-gray-500">{merchants.length} işletme</p>
         <input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40" />
+          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-56" />
       </div>
 
       <div className="space-y-2">
@@ -527,7 +646,7 @@ function MerchantsTab() {
                 className="w-full text-left p-4"
                 onClick={() => setExpandedId(isExpanded ? null : m.id)}
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-gray-900 text-sm">{m.name}</p>
@@ -562,7 +681,7 @@ function MerchantsTab() {
 
               {/* Detay paneli */}
               {isExpanded && (
-                <div className="px-4 pb-4">
+                <div className="px-3 sm:px-4 pb-4">
                   <MerchantDetailPanel
                     merchant={m}
                     subscription={m.subscription}
@@ -572,7 +691,11 @@ function MerchantsTab() {
                     onStatusChange={async (status) => {
                       await setStatus(m.id, status)
                     }}
+                    onLocationUpdate={(sector, city, district) => {
+                      setMerchants((prev) => prev.map((x) => x.id === m.id ? { ...x, sector, city, district } : x))
+                    }}
                   />
+                  <AdminMerchantReport merchantId={m.id} />
                 </div>
               )}
             </div>
@@ -658,6 +781,7 @@ function PricingTab() {
           updatedAt: serverTimestamp(),
         },
       }, { merge: true })
+      await recordAdminAction({ action: 'pricing.updated', targetType: 'pricing', targetId: planId, summary: `${planId} fiyatlandırma ve limitleri güncellendi`, metadata: { monthlyPrice, yearlyPrice } })
 
       setPlans((prev) => prev.map((p) => p.id === planId
         ? { ...p, monthlyPrice, yearlyPrice, shopierMonthlyUrl: draft.shopierMonthlyUrl ?? '', shopierYearlyUrl: draft.shopierYearlyUrl ?? '', maxCustomers, maxMonthlyTransactions, maxCampaigns }
@@ -700,7 +824,7 @@ function PricingTab() {
                 {plan.id !== 'trial' && (
                   <>
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Fiyatlar</p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Aylık Fiyat (TL)</label>
                         <input
@@ -725,7 +849,7 @@ function PricingTab() {
                 )}
 
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Limitler</p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Müşteri</label>
                     <input
@@ -802,7 +926,7 @@ function PricingTab() {
                     Ücretsiz deneme paketi · 14 gün · Ödeme alınmaz
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Aylık</p>
                       <p className="font-bold text-gray-900">₺{plan.monthlyPrice}<span className="text-gray-400 font-normal text-xs">/ay</span></p>
@@ -829,7 +953,7 @@ function PricingTab() {
                     </div>
                   </div>
                 )}
-                <div className="flex gap-3 text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
                   <span>👥 {plan.maxCustomers === -1 ? '∞' : plan.maxCustomers} müşteri</span>
                   <span>·</span>
                   <span>📋 {plan.maxMonthlyTransactions === -1 ? '∞' : plan.maxMonthlyTransactions} işlem/ay</span>
@@ -926,6 +1050,7 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
         status: 'closed',
         updatedAt: serverTimestamp(),
       })
+      await recordAdminAction({ action: 'support.replied', targetType: 'support', targetId: ticket.id, merchantId: ticket.merchantId, summary: `${ticket.merchantName} destek talebi yanıtlanıp kapatıldı` })
       toast.success('Yanıt gönderildi')
       setReplyingId(null)
       setReplyText('')
@@ -937,6 +1062,8 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
   async function setStatus(id: string, status: SupportTicket['status']) {
     try {
       await updateDoc(doc(db, 'supportTickets', id), { status, updatedAt: serverTimestamp() })
+      const ticket = tickets.find((item) => item.id === id)
+      await recordAdminAction({ action: 'support.status_changed', targetType: 'support', targetId: id, merchantId: ticket?.merchantId, summary: `Destek talebi ${status} durumuna alındı`, metadata: { status } })
       await load()
     } catch (err) { console.error(err) }
   }
@@ -968,8 +1095,8 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
               <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
                 {/* Başlık */}
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-gray-900">{t.subject}</p>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 break-words">{t.subject}</p>
                     <p className="text-xs text-gray-400">{t.merchantName} · {formatDateTime(t.createdAt)}</p>
                   </div>
                   <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${t.status === 'open' ? 'bg-blue-100 text-blue-700' : t.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -979,9 +1106,9 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
 
                 {/* Firma bilgileri */}
                 {md && (
-                  <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                  <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-2.5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                     <a href={`tel:${md.phone}`}
-                      className="flex items-center gap-1.5 text-gray-700 hover:text-violet-700 transition-colors col-span-2 font-medium">
+                      className="flex items-center gap-1.5 text-gray-700 hover:text-violet-700 transition-colors sm:col-span-2 font-medium min-w-0 break-all">
                       <span>📞</span> {md.phone}
                     </a>
                     <div className="flex items-center gap-1.5 text-gray-600">
@@ -990,7 +1117,7 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                     <div className="flex items-center gap-1.5 text-gray-600">
                       <span>📍</span> {md.city}{md.district ? `, ${md.district}` : ''}
                     </div>
-                    <div className="flex items-center gap-1.5 col-span-2">
+                    <div className="flex items-center gap-1.5 sm:col-span-2 flex-wrap">
                       <span>💳</span>
                       <span className="font-semibold text-gray-800">{PLAN_LABELS[md.plan] ?? md.plan}</span>
                       {md.planStatus && (
@@ -1002,7 +1129,7 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                     {md.instagram && (
                       <a href={`https://instagram.com/${md.instagram.replace(/^@/, '')}`}
                         target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-gray-600 hover:text-pink-600 transition-colors col-span-2">
+                        className="flex items-center gap-1.5 text-gray-600 hover:text-pink-600 transition-colors sm:col-span-2 min-w-0 break-all">
                         <span>📷</span> @{md.instagram.replace(/^@/, '')}
                       </a>
                     )}
@@ -1010,7 +1137,7 @@ function SupportTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                 )}
 
                 {/* Mesaj */}
-                <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap">{t.message}</p>
+                <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap break-words">{t.message}</p>
 
                 {t.adminReply && (
                   <div className="bg-green-50 border border-green-100 rounded-lg p-3">

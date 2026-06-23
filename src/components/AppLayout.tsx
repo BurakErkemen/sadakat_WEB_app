@@ -53,6 +53,33 @@ function AppLayoutInner() {
     window.location.replace('/login')
   }
 
+  if (!loading && merchant?.status === 'passive') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <header className="bg-white border-b border-gray-200">
+          <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
+            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+              style={{ objectFit: 'contain', maxWidth: '140px' }}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+          </div>
+        </header>
+        <div className="flex-1 flex items-center justify-center px-6">
+          <div className="text-center max-w-xs">
+            <p className="text-5xl mb-4">🔒</p>
+            <h1 className="text-xl font-bold text-gray-900 mb-2">İşletme Askıya Alındı</h1>
+            <p className="text-sm text-gray-500 mb-6">
+              İşletmeniz şu an pasif durumda. Detaylı bilgi için yöneticinizle iletişime geçin.
+            </p>
+            <button onClick={handleSignOut}
+              className="text-sm font-medium text-red-600 border border-red-200 px-4 py-2 rounded-lg hover:bg-red-50">
+              Çıkış Yap
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Bar */}

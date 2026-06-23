@@ -24,6 +24,9 @@ export default function SettingsPage() {
   const [brandColor, setBrandColor] = useState('#6366f1')
   const [brandColor2, setBrandColor2] = useState('')
   const [useGradient, setUseGradient] = useState(false)
+  const [sector, setSector] = useState('')
+  const [city, setCity] = useState('')
+  const [district, setDistrict] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -37,6 +40,9 @@ export default function SettingsPage() {
     const c2 = merchant.brandColor2 ?? ''
     setBrandColor2(c2 || '#a855f7')
     setUseGradient(!!c2)
+    setSector(merchant.sector ?? '')
+    setCity(merchant.city ?? '')
+    setDistrict(merchant.district ?? '')
   }, [merchant])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -52,6 +58,9 @@ export default function SettingsPage() {
         menuUrl: menuUrl || null,
         brandColor,
         brandColor2: useGradient ? brandColor2 : null,
+        sector: sector.trim() || merchant.sector,
+        city: city.trim() || merchant.city,
+        district: district.trim() || merchant.district,
         updatedAt: serverTimestamp(),
       })
       toast.success('Ayarlar kaydedildi')
@@ -160,9 +169,30 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 space-y-1">
-          <p><span className="font-medium">Sektör:</span> {merchant.sector}</p>
-          <p><span className="font-medium">Şehir/İlçe:</span> {merchant.city} / {merchant.district}</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Sektör</label>
+            <input type="text" value={sector} onChange={(e) => setSector(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="ör. Kafe, Restoran, Berber" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Şehir</label>
+              <input type="text" value={city} onChange={(e) => setCity(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                placeholder="ör. Muğla" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">İlçe</label>
+              <input type="text" value={district} onChange={(e) => setDistrict(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                placeholder="ör. Bodrum" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
           <p><span className="font-medium">İşletme Linki:</span> /m/{merchant.slug}</p>
         </div>
 

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
+import { useAuth } from '@/features/auth/AuthContext'
 import { PLAN_LIMITS } from '@/lib/constants'
 import { formatDate } from '@/lib/dates'
 import type { Subscription } from '@/types'
@@ -34,12 +35,14 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function SubscriptionPage() {
   const { merchant } = useMerchant()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [pricing, setPricing] = useState<Record<string, PlanConfig>>({})
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly')
   const [loading, setLoading] = useState(true)
   const [requestingPlan, setRequestingPlan] = useState<string | null>(null)
+  const [consentChecked, setConsentChecked] = useState(false)
 
   useEffect(() => {
     if (!merchant) return
@@ -63,31 +66,73 @@ export default function SubscriptionPage() {
   function getPrice(planId: string): number {
     const meta = PLAN_META.find((p) => p.id === planId)!
     const cfg = pricing[planId]
-    if (billingCycle === 'monthly') return cfg?.monthlyPrice ?? meta.defaultMonthly
-    return cfg?.yearlyPrice ?? meta.defaultYearly
+    const monthly = cfg?.monthlyPrice ?? meta.defaultMonthly
+    if (billingCycle === 'monthly') return monthly
+    // Firestore'da yearlyPrice yapılandırıldıysa kullan; yoksa planın doğal indirim oranını
+    // aylık fiyata uygula (admin monthlyPrice'ı değiştiğinde yıllık da dinamik güncellenir)
+    if (cfg?.yearlyPrice != null) return cfg.yearlyPrice
+    const discountRate = 1 - meta.defaultYearly / meta.defaultMonthly
+    return Math.round(monthly * (1 - discountRate))
   }
 
-  async function contactAdmin(planId: string, planLabel: string) {
-    if (!merchant) return
+  // Tüm planların aylık→yıllık tasarruf oranlarının ortalaması (tam sayıya yuvarlanmış)
+  const yearlyDiscountPct = Math.round(
+    PLAN_META.reduce((sum, p) => {
+      const cfg = pricing[p.id]
+      const monthly = cfg?.monthlyPrice ?? p.defaultMonthly
+      const yearly = cfg?.yearlyPrice ?? p.defaultYearly
+      return sum + (1 - yearly / monthly) * 100
+    }, 0) / PLAN_META.length
+  )
+
+  // Onay kaydı + aksiyon: Firestore yazımı başarısız olursa ödeme linki açılmaz.
+  // Consent, hangi plan/fiyat için verildiğini kanıtlayan tüm alanları içerir.
+  async function handlePlanClick(planId: string, planLabel: string, price: number, shopierUrl: string | null) {
+    if (!merchant || !user) return
     setRequestingPlan(planId)
+    const actionType = shopierUrl ? 'shopier' : 'admin_contact'
     try {
-      await addDoc(collection(db, 'supportTickets'), {
+      await addDoc(collection(db, 'merchants', merchant.id, 'paymentConsents'), {
+        userId: user.uid,
         merchantId: merchant.id,
-        merchantName: merchant.name,
-        subject: `Plan Yükseltme Talebi: ${planLabel}`,
-        message: `Merhaba,\n\n${planLabel} planına geçmek istiyorum. ${billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'} ödeme tercihim. Lütfen bilgilendirin.\n\nTeşekkürler,\n${merchant.name}`,
-        status: 'open',
-        adminReply: null,
-        repliedAt: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        planId,
+        planLabel,
+        billingCycle,
+        displayedPrice: price,
+        shopierUrl: shopierUrl ?? null,
+        actionType,
+        acceptedTermsVersion: 'Haziran 2026 / Madde 4A',
+        acceptedAt: serverTimestamp(),
       })
-      toast.success('Talebiniz iletildi, en kısa sürede geri dönülecek.')
     } catch (err) {
-      console.error(err)
-      toast.error('Talep gönderilemedi. Tekrar deneyin.')
-    } finally {
+      console.error('Onay kaydedilemedi:', err)
+      toast.error('Onay kaydedilemedi. Lütfen tekrar deneyin.')
       setRequestingPlan(null)
+      return
+    }
+    if (shopierUrl) {
+      window.open(shopierUrl, '_blank', 'noopener,noreferrer')
+      setRequestingPlan(null)
+    } else {
+      try {
+        await addDoc(collection(db, 'supportTickets'), {
+          merchantId: merchant.id,
+          merchantName: merchant.name,
+          subject: `Plan Yükseltme Talebi: ${planLabel}`,
+          message: `Merhaba,\n\n${planLabel} planına geçmek istiyorum. ${billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'} ödeme tercihim. Lütfen bilgilendirin.\n\nTeşekkürler,\n${merchant.name}`,
+          status: 'open',
+          adminReply: null,
+          repliedAt: null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+        toast.success('Talebiniz iletildi, en kısa sürede geri dönülecek.')
+      } catch (ticketErr) {
+        console.error(ticketErr)
+        toast.error('Talep gönderilemedi. Tekrar deneyin.')
+      } finally {
+        setRequestingPlan(null)
+      }
     }
   }
 
@@ -237,7 +282,7 @@ export default function SubscriptionPage() {
               onClick={() => setBillingCycle('yearly')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${billingCycle === 'yearly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
               Yıllık
-              <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded-full font-bold">%20</span>
+              <span className="bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded-full font-bold">%{yearlyDiscountPct}</span>
             </button>
           </div>
         </div>
@@ -282,19 +327,12 @@ export default function SubscriptionPage() {
               </div>
 
               {!isCurrent && (
-                shopierUrl ? (
-                  <a href={shopierUrl} target="_blank" rel="noopener noreferrer"
-                    className="block w-full text-center bg-violet-700 text-white py-3 text-sm font-bold hover:bg-violet-800 transition-colors">
-                    Bu Planı Seç →
-                  </a>
-                ) : (
-                  <button
-                    onClick={() => void contactAdmin(p.id, p.label)}
-                    disabled={requestingPlan === p.id}
-                    className="block w-full text-center bg-violet-700 text-white py-3 text-sm font-semibold hover:bg-violet-800 transition-colors disabled:opacity-50">
-                    {requestingPlan === p.id ? 'Gönderiliyor…' : 'İletişime Geç'}
-                  </button>
-                )
+                <button
+                  onClick={() => void handlePlanClick(p.id, p.label, price, shopierUrl)}
+                  disabled={!consentChecked || requestingPlan !== null}
+                  className="block w-full text-center bg-violet-700 text-white py-3 text-sm font-bold hover:bg-violet-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {requestingPlan === p.id ? 'İşleniyor…' : !consentChecked ? 'Koşulları onaylayın' : shopierUrl ? 'Bu Planı Seç →' : 'İletişime Geç'}
+                </button>
               )}
             </div>
           ) : (
@@ -328,19 +366,12 @@ export default function SubscriptionPage() {
               </div>
 
               {!isCurrent && (
-                shopierUrl ? (
-                  <a href={shopierUrl} target="_blank" rel="noopener noreferrer"
-                    className="block w-full text-center bg-gray-900 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-violet-700 transition-colors">
-                    Bu Planı Seç
-                  </a>
-                ) : (
-                  <button
-                    onClick={() => void contactAdmin(p.id, p.label)}
-                    disabled={requestingPlan === p.id}
-                    className="w-full border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm font-medium hover:border-violet-300 hover:text-violet-700 transition-colors disabled:opacity-50">
-                    {requestingPlan === p.id ? 'Gönderiliyor…' : 'İletişime Geç'}
-                  </button>
-                )
+                <button
+                  onClick={() => void handlePlanClick(p.id, p.label, price, shopierUrl)}
+                  disabled={!consentChecked || requestingPlan !== null}
+                  className="w-full border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm font-medium hover:border-violet-300 hover:text-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {requestingPlan === p.id ? 'İşleniyor…' : !consentChecked ? 'Koşulları onaylayın' : shopierUrl ? 'Bu Planı Seç' : 'İletişime Geç'}
+                </button>
               )}
             </div>
           )
@@ -350,6 +381,40 @@ export default function SubscriptionPage() {
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800">
         Ödeme sonrası aboneliğiniz platform yöneticisi tarafından aktif edilir (genellikle 1 iş günü içinde).
         Sorularınız için: <a href="mailto:info@cyandanismanlik.com" className="underline font-medium">info@cyandanismanlik.com</a>
+      </div>
+
+      {/* Satın alma onayı — checkbox işaretlenmeden plan seçilemez */}
+      <div className={`rounded-xl border p-4 text-xs space-y-3 transition-colors ${
+        consentChecked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'
+      }`}>
+        <div>
+          <p className="font-semibold text-gray-800 mb-1.5">⚠️ Satın Alma Koşulları</p>
+          <ul className="space-y-1 list-disc list-inside text-gray-600">
+            <li>Abonelik dönemi başladıktan sonra <strong>iade yapılmaz</strong>.</li>
+            <li>Yıllık paketlerde kalan aylara orantılı kısmi iade uygulanmaz.</li>
+            <li>Plan değişikliği halinde kullanılmış dönem ücretleri mahsup edilmez.</li>
+            <li>
+              <Link to="/kullanim-kosullari" target="_blank" className="text-violet-600 hover:underline font-medium">
+                Kullanım Koşulları
+              </Link> Madde 4A'yı okudum; iade ve cayma politikasını anladım.
+            </li>
+          </ul>
+        </div>
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={consentChecked}
+            onChange={(e) => setConsentChecked(e.target.checked)}
+            className="mt-0.5 w-4 h-4 rounded border-gray-400 text-violet-600 focus:ring-violet-500 shrink-0"
+          />
+          <span className={`leading-relaxed font-medium ${consentChecked ? 'text-green-800' : 'text-gray-700'}`}>
+            Okudum, yukarıdaki satın alma koşullarını kabul ediyorum.
+            {consentChecked && <span className="ml-1 text-green-600">✓</span>}
+          </span>
+        </label>
+        {!consentChecked && (
+          <p className="text-gray-400 text-[11px]">Plan seçmek için önce koşulları onaylayın.</p>
+        )}
       </div>
     </div>
   )

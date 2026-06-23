@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { doc, getDoc } from 'firebase/firestore'
 import { useParams, Link } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
+import { useAuth } from '@/features/auth/AuthContext'
 import { brandStyle } from '@/lib/utils'
 import type { Merchant, Campaign } from '@/types'
 
@@ -16,6 +17,7 @@ function toInstagramUrl(val: string): string {
 
 export default function PublicMerchantPage() {
   const { slug } = useParams<{ slug: string }>()
+  const { profile } = useAuth()
   const [state, setState] = useState<State>('loading')
   const [merchant, setMerchant] = useState<Merchant | null>(null)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -82,6 +84,14 @@ export default function PublicMerchantPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+
+      {/* Merchant owner banner — sadece giriş yapmış işletme sahipleri görür */}
+      {profile?.merchantId && (
+        <div className="bg-indigo-600 text-white text-center text-xs py-2 px-4 flex items-center justify-center gap-3">
+          <span>İşletme panelinizi görüyorsunuz</span>
+          <Link to="/app" className="underline font-semibold hover:text-indigo-200">← Panele Dön</Link>
+        </div>
+      )}
 
       {/* Hero header — sadece metin, logo dışarıda */}
       <div className="relative pt-12 pb-20 px-6 text-white" style={headerStyle}>
@@ -282,13 +292,16 @@ export default function PublicMerchantPage() {
 }
 
 function InfoScreen({ icon, title, message }: { icon: string; title: string; message: string }) {
+  const { profile } = useAuth()
+  const backTo = profile?.merchantId ? '/app' : '/'
+  const backLabel = profile?.merchantId ? '← Panele Dön' : '← Ana Sayfaya Dön'
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="text-center max-w-xs">
         <p className="text-5xl mb-4">{icon}</p>
         <h1 className="text-xl font-bold text-gray-900 mb-2">{title}</h1>
         <p className="text-sm text-gray-500">{message}</p>
-        <Link to="/" className="mt-6 inline-block text-sm text-indigo-600">← Ana Sayfaya Dön</Link>
+        <Link to={backTo} className="mt-6 inline-block text-sm text-indigo-600">{backLabel}</Link>
       </div>
     </div>
   )

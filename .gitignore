@@ -37,6 +37,9 @@ coverage/
 .nyc_output/
 junit.xml
 
+# TypeScript build info — yeniden üretilen dosyalar
+*.tsbuildinfo
+
 # Firebase emulator outputs
 firebase-debug.log
 firestore-debug.log
@@ -453,3 +456,7 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 .env.example
+RAPOR.md
+src/firebase/firestore.ts
+firestore.rules
+*.rules

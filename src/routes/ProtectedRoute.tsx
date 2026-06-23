@@ -10,9 +10,16 @@ function Spinner() {
 }
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
+  const { user, profile, isAdmin, loading } = useAuth()
   if (loading) return <Spinner />
   if (!user) return <Navigate to="/login" replace />
+  if (!isAdmin && !user.emailVerified) return <Navigate to="/verify-email" replace />
+  // Pending veya reddedilmiş kullanıcılar uygulamaya giremez.
+  // AuthContext onSnapshot ile status değişikliğini anlık alır;
+  // admin onaylayınca/reddedince bu guard otomatik tetiklenir.
+  if (!isAdmin && (profile?.status === 'pending' || profile?.status === 'rejected')) {
+    return <Navigate to="/pending" replace />
+  }
   return <>{children}</>
 }
 
