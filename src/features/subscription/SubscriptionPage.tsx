@@ -5,7 +5,8 @@ import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
 import { useAuth } from '@/features/auth/AuthContext'
-import { PLAN_LIMITS } from '@/lib/constants'
+import { useMerchantSub } from '@/contexts/MerchantSubContext'
+import { PLAN_LIMITS, resolveLimit } from '@/lib/constants'
 import { formatDate } from '@/lib/dates'
 import type { Subscription } from '@/types'
 
@@ -27,7 +28,7 @@ const PLAN_META = [
   },
 ]
 
-type PlanConfig = { monthlyPrice?: number; yearlyPrice?: number; shopierMonthlyUrl?: string; shopierYearlyUrl?: string }
+type PlanConfig = { monthlyPrice?: number; yearlyPrice?: number; shopierMonthlyUrl?: string; shopierYearlyUrl?: string; features?: string[]; maxCustomers?: number; maxMonthlyTransactions?: number; maxCampaigns?: number }
 
 const STATUS_LABELS: Record<string, string> = {
   active: 'Aktif', trialing: 'Deneme', past_due: 'Ödeme Gecikmiş', canceled: 'İptal Edildi',
@@ -36,6 +37,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default function SubscriptionPage() {
   const { merchant } = useMerchant()
   const { user } = useAuth()
+  const { limits } = useMerchantSub()
   const navigate = useNavigate()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [pricing, setPricing] = useState<Record<string, PlanConfig>>({})
@@ -43,6 +45,8 @@ export default function SubscriptionPage() {
   const [loading, setLoading] = useState(true)
   const [requestingPlan, setRequestingPlan] = useState<string | null>(null)
   const [consentChecked, setConsentChecked] = useState(false)
+  const [contactModal, setContactModal] = useState<{ planId: string; planLabel: string; price: number } | null>(null)
+  const [sendingContact, setSendingContact] = useState(false)
 
   useEffect(() => {
     if (!merchant) return
@@ -57,7 +61,6 @@ export default function SubscriptionPage() {
   }, [merchant?.id])
 
   const currentPlanId = sub?.plan ?? 'trial'
-  const limits = PLAN_LIMITS[currentPlanId]
 
   const subEndDate = sub?.currentPeriodEnd?.toDate() ?? null
   const isSubExpired = subEndDate ? subEndDate < new Date() : false
@@ -85,12 +88,24 @@ export default function SubscriptionPage() {
     }, 0) / PLAN_META.length
   )
 
-  // Onay kaydı + aksiyon: Firestore yazımı başarısız olursa ödeme linki açılmaz.
-  // Consent, hangi plan/fiyat için verildiğini kanıtlayan tüm alanları içerir.
-  async function handlePlanClick(planId: string, planLabel: string, price: number, shopierUrl: string | null) {
+  function buildContactMessage(planLabel: string, price: number): string {
+    return `Merhaba Sadex Ekibi,
+
+${merchant?.name ?? 'İşletmemiz'} olarak ${planLabel} planına geçmek istiyoruz.
+
+Ödeme tercihi: ${billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'}
+Görüntülenen fiyat: ₺${price}/ay${billingCycle === 'yearly' ? ' (yıllık faturalama)' : ''}
+
+Geçiş süreci ve faturalama hakkında bilgi almak istiyoruz. En kısa sürede geri dönmenizi rica ederiz.
+
+Teşekkürler,
+${merchant?.name ?? ''}`
+  }
+
+  // Shopier ödeme: onay kaydı oluşturulduktan sonra link açılır.
+  async function handleSelectPlan(planId: string, planLabel: string, price: number, shopierUrl: string) {
     if (!merchant || !user) return
     setRequestingPlan(planId)
-    const actionType = shopierUrl ? 'shopier' : 'admin_contact'
     try {
       await addDoc(collection(db, 'merchants', merchant.id, 'paymentConsents'), {
         userId: user.uid,
@@ -99,8 +114,8 @@ export default function SubscriptionPage() {
         planLabel,
         billingCycle,
         displayedPrice: price,
-        shopierUrl: shopierUrl ?? null,
-        actionType,
+        shopierUrl,
+        actionType: 'shopier',
         acceptedTermsVersion: 'Haziran 2026 / Madde 4A',
         acceptedAt: serverTimestamp(),
       })
@@ -110,29 +125,47 @@ export default function SubscriptionPage() {
       setRequestingPlan(null)
       return
     }
-    if (shopierUrl) {
-      window.open(shopierUrl, '_blank', 'noopener,noreferrer')
-      setRequestingPlan(null)
-    } else {
-      try {
-        await addDoc(collection(db, 'supportTickets'), {
-          merchantId: merchant.id,
-          merchantName: merchant.name,
-          subject: `Plan Yükseltme Talebi: ${planLabel}`,
-          message: `Merhaba,\n\n${planLabel} planına geçmek istiyorum. ${billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'} ödeme tercihim. Lütfen bilgilendirin.\n\nTeşekkürler,\n${merchant.name}`,
-          status: 'open',
-          adminReply: null,
-          repliedAt: null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        })
-        toast.success('Talebiniz iletildi, en kısa sürede geri dönülecek.')
-      } catch (ticketErr) {
-        console.error(ticketErr)
-        toast.error('Talep gönderilemedi. Tekrar deneyin.')
-      } finally {
-        setRequestingPlan(null)
-      }
+    window.open(shopierUrl, '_blank', 'noopener,noreferrer')
+    setRequestingPlan(null)
+  }
+
+  // İletişim talebi: onay kaydı + destek bileti oluşturulur.
+  async function handleSendContact() {
+    if (!contactModal || !merchant || !user) return
+    const { planId, planLabel, price } = contactModal
+    setSendingContact(true)
+    try {
+      await addDoc(collection(db, 'merchants', merchant.id, 'paymentConsents'), {
+        userId: user.uid,
+        merchantId: merchant.id,
+        planId,
+        planLabel,
+        billingCycle,
+        displayedPrice: price,
+        shopierUrl: null,
+        actionType: 'admin_contact',
+        acceptedTermsVersion: 'Haziran 2026 / Madde 4A',
+        acceptedAt: serverTimestamp(),
+      })
+      await addDoc(collection(db, 'supportTickets'), {
+        merchantId: merchant.id,
+        merchantName: merchant.name,
+        subject: `Plan Yükseltme Talebi: ${planLabel}`,
+        message: buildContactMessage(planLabel, price),
+        status: 'open',
+        adminReply: null,
+        repliedAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      toast.success('Talebiniz iletildi, en kısa sürede geri dönülecek.')
+      setContactModal(null)
+      setConsentChecked(false)
+    } catch (err) {
+      console.error(err)
+      toast.error('Talep gönderilemedi. Tekrar deneyin.')
+    } finally {
+      setSendingContact(false)
     }
   }
 
@@ -292,6 +325,9 @@ export default function SubscriptionPage() {
           const price = getPrice(p.id)
           const shopierUrl = getShopierUrl(p.id)
           const planLimits = PLAN_LIMITS[p.id as keyof typeof PLAN_LIMITS]
+          const pCfg = pricing[p.id]
+          const resolvedMaxCust = pCfg?.maxCustomers != null ? resolveLimit(pCfg.maxCustomers, planLimits.maxCustomers) : planLimits.maxCustomers
+          const resolvedMaxTx = pCfg?.maxMonthlyTransactions != null ? resolveLimit(pCfg.maxMonthlyTransactions, planLimits.maxMonthlyTransactions) : planLimits.maxMonthlyTransactions
 
           return p.isPopular ? (
             /* Popüler → gradient kart */
@@ -307,7 +343,7 @@ export default function SubscriptionPage() {
                         {isCurrent && <span className="text-xs bg-green-400/30 text-green-200 px-2 py-0.5 rounded-full">Mevcut</span>}
                       </div>
                       <p className="text-violet-200 text-xs mt-0.5">
-                        {planLimits.maxCustomers === Infinity ? 'Sınırsız' : planLimits.maxCustomers} müşteri · {planLimits.maxMonthlyTransactions === Infinity ? 'Sınırsız' : planLimits.maxMonthlyTransactions} işlem/ay
+                        {resolvedMaxCust === Infinity ? 'Sınırsız' : resolvedMaxCust} müşteri · {resolvedMaxTx === Infinity ? 'Sınırsız' : resolvedMaxTx} işlem/ay
                       </p>
                     </div>
                   </div>
@@ -318,7 +354,7 @@ export default function SubscriptionPage() {
                 </div>
 
                 <ul className="mt-3 grid grid-cols-2 gap-1">
-                  {p.features.map((f) => (
+                  {(pricing[p.id]?.features ?? p.features).map((f) => (
                     <li key={f} className="flex items-center gap-1.5 text-xs text-violet-100">
                       <span className="text-green-300">✓</span> {f}
                     </li>
@@ -327,12 +363,22 @@ export default function SubscriptionPage() {
               </div>
 
               {!isCurrent && (
-                <button
-                  onClick={() => void handlePlanClick(p.id, p.label, price, shopierUrl)}
-                  disabled={!consentChecked || requestingPlan !== null}
-                  className="block w-full text-center bg-violet-700 text-white py-3 text-sm font-bold hover:bg-violet-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {requestingPlan === p.id ? 'İşleniyor…' : !consentChecked ? 'Koşulları onaylayın' : shopierUrl ? 'Bu Planı Seç →' : 'İletişime Geç'}
-                </button>
+                <div className="flex gap-2">
+                  {shopierUrl && (
+                    <button
+                      onClick={() => void handleSelectPlan(p.id, p.label, price, shopierUrl)}
+                      disabled={!consentChecked || requestingPlan !== null}
+                      className="flex-1 text-center bg-violet-700 text-white py-3 text-sm font-bold hover:bg-violet-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      {requestingPlan === p.id ? 'İşleniyor…' : 'Planı Seç →'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setContactModal({ planId: p.id, planLabel: p.label, price })}
+                    disabled={!consentChecked}
+                    className="flex-1 text-center bg-white/20 text-white py-3 text-sm font-semibold hover:bg-white/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    İletişime Geç
+                  </button>
+                </div>
               )}
             </div>
           ) : (
@@ -347,7 +393,7 @@ export default function SubscriptionPage() {
                       {isCurrent && <span className="text-xs text-violet-600 bg-violet-100 px-2 py-0.5 rounded-full font-medium">Mevcut</span>}
                     </div>
                     <p className="text-xs text-gray-500">
-                      {planLimits.maxCustomers === Infinity ? 'Sınırsız' : planLimits.maxCustomers} müşteri · {planLimits.maxMonthlyTransactions === Infinity ? 'Sınırsız' : planLimits.maxMonthlyTransactions} işlem/ay
+                      {resolvedMaxCust === Infinity ? 'Sınırsız' : resolvedMaxCust} müşteri · {resolvedMaxTx === Infinity ? 'Sınırsız' : resolvedMaxTx} işlem/ay
                     </p>
                   </div>
                 </div>
@@ -358,7 +404,7 @@ export default function SubscriptionPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-1">
-                {p.features.map((f) => (
+                {(pricing[p.id]?.features ?? p.features).map((f) => (
                   <p key={f} className="flex items-center gap-1.5 text-xs text-gray-500">
                     <span className="text-violet-500">✓</span> {f}
                   </p>
@@ -366,12 +412,22 @@ export default function SubscriptionPage() {
               </div>
 
               {!isCurrent && (
-                <button
-                  onClick={() => void handlePlanClick(p.id, p.label, price, shopierUrl)}
-                  disabled={!consentChecked || requestingPlan !== null}
-                  className="w-full border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm font-medium hover:border-violet-300 hover:text-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {requestingPlan === p.id ? 'İşleniyor…' : !consentChecked ? 'Koşulları onaylayın' : shopierUrl ? 'Bu Planı Seç' : 'İletişime Geç'}
-                </button>
+                <div className="flex gap-2">
+                  {shopierUrl && (
+                    <button
+                      onClick={() => void handleSelectPlan(p.id, p.label, price, shopierUrl)}
+                      disabled={!consentChecked || requestingPlan !== null}
+                      className="flex-1 bg-violet-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      {requestingPlan === p.id ? 'İşleniyor…' : 'Planı Seç →'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setContactModal({ planId: p.id, planLabel: p.label, price })}
+                    disabled={!consentChecked}
+                    className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm font-medium hover:border-violet-300 hover:text-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    İletişime Geç
+                  </button>
+                </div>
               )}
             </div>
           )
@@ -416,6 +472,42 @@ export default function SubscriptionPage() {
           <p className="text-gray-400 text-[11px]">Plan seçmek için önce koşulları onaylayın.</p>
         )}
       </div>
+
+      {/* İletişime Geç — taslak modal */}
+      {contactModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md space-y-4 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-bold text-gray-900">Yükseltme Talebi</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{contactModal.planLabel} planı · {billingCycle === 'yearly' ? 'Yıllık' : 'Aylık'} · ₺{contactModal.price}/ay</p>
+              </div>
+              <button onClick={() => setContactModal(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Gönderilecek Mesaj</p>
+              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
+                {buildContactMessage(contactModal.planLabel, contactModal.price)}
+              </pre>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => void handleSendContact()}
+                disabled={sendingContact || !consentChecked}
+                className="flex-1 bg-violet-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                {sendingContact ? 'Gönderiliyor…' : 'Gönder'}
+              </button>
+              <button
+                onClick={() => setContactModal(null)}
+                className="bg-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-200 transition-colors">
+                İptal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

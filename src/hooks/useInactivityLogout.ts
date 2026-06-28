@@ -41,10 +41,8 @@ export function useInactivityLogout() {
       }
     }
 
-    // Başlangıçta timestamp yoksa şimdiki zamanı yaz
-    if (!localStorage.getItem(LS_KEY)) {
-      localStorage.setItem(LS_KEY, String(Date.now()))
-    }
+    // Her mount'ta timestamp'i sıfırla — tarayıcı kapatılıp açılmasını "hareketsizlik" sayma
+    localStorage.setItem(LS_KEY, String(Date.now()))
 
     const EVENTS = ['mousemove', 'mousedown', 'keypress', 'touchstart', 'click', 'scroll'] as const
     EVENTS.forEach((e) => window.addEventListener(e, onActivity, { passive: true }))

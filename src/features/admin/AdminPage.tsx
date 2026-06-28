@@ -740,6 +740,7 @@ function PricingTab() {
           maxCustomers: d.maxCustomers ?? p.maxCustomers,
           maxMonthlyTransactions: d.maxMonthlyTransactions ?? p.maxMonthlyTransactions,
           maxCampaigns: d.maxCampaigns ?? p.maxCampaigns,
+          features: (d.features && d.features.length > 0) ? d.features : p.features,
         }
       }))
     }).catch(console.error)
@@ -755,6 +756,7 @@ function PricingTab() {
       maxCustomers: plan.maxCustomers,
       maxMonthlyTransactions: plan.maxMonthlyTransactions,
       maxCampaigns: plan.maxCampaigns,
+      features: plan.features,
     })
   }
 
@@ -769,6 +771,7 @@ function PricingTab() {
 
     setSaving(true)
     try {
+      const savedFeatures = (draft.features ?? []).map((f) => f.trim()).filter(Boolean)
       await setDoc(doc(db, 'config', 'pricing'), {
         [planId]: {
           monthlyPrice,
@@ -778,13 +781,14 @@ function PricingTab() {
           maxCustomers: isNaN(maxCustomers) ? null : maxCustomers,
           maxMonthlyTransactions: isNaN(maxMonthlyTransactions) ? null : maxMonthlyTransactions,
           maxCampaigns: isNaN(maxCampaigns) ? null : maxCampaigns,
+          features: savedFeatures,
           updatedAt: serverTimestamp(),
         },
       }, { merge: true })
       await recordAdminAction({ action: 'pricing.updated', targetType: 'pricing', targetId: planId, summary: `${planId} fiyatlandırma ve limitleri güncellendi`, metadata: { monthlyPrice, yearlyPrice } })
 
       setPlans((prev) => prev.map((p) => p.id === planId
-        ? { ...p, monthlyPrice, yearlyPrice, shopierMonthlyUrl: draft.shopierMonthlyUrl ?? '', shopierYearlyUrl: draft.shopierYearlyUrl ?? '', maxCustomers, maxMonthlyTransactions, maxCampaigns }
+        ? { ...p, monthlyPrice, yearlyPrice, shopierMonthlyUrl: draft.shopierMonthlyUrl ?? '', shopierYearlyUrl: draft.shopierYearlyUrl ?? '', maxCustomers, maxMonthlyTransactions, maxCampaigns, features: savedFeatures }
         : p
       ))
       toast.success('Plan güncellendi')
@@ -882,6 +886,19 @@ function PricingTab() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400">-1 girin = Sınırsız</p>
+
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Özellikler</p>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Her satıra bir özellik yazın</label>
+                  <textarea
+                    rows={5}
+                    value={(draft.features ?? []).join('\n')}
+                    onChange={(e) => setDraft((d) => ({ ...d, features: e.target.value.split('\n') }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y font-mono"
+                    placeholder={'200 müşteri\n500 işlem/ay\n2 kampanya'}
+                  />
+                  <p className="text-xs text-gray-400 mt-0.5">Bu liste anasayfa ve abonelik ekranında görünür.</p>
+                </div>
 
                 {plan.id !== 'trial' && (
                   <>

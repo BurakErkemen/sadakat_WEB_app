@@ -58,8 +58,8 @@ service cloud.firestore {
     match /publicSlugs/{slug} {
       allow get: if true;
       allow list: if false;
-      allow create: if signedIn() && isMerchantOwner(request.resource.data.merchantId);
-      allow update, delete: if isAdmin() || (signedIn() && isMerchantOwner(resource.data.merchantId));
+      allow create: if isMerchantOwner(request.resource.data.merchantId);
+      allow update, delete: if isAdmin() || isMerchantOwner(resource.data.merchantId);
     }
 
     match /merchants/{merchantId} {

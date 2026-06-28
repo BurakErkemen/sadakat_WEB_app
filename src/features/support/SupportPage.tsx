@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { collection, addDoc, getDocs, query, where, orderBy, serverTimestamp } from 'firebase/firestore'
+import { collection, addDoc, onSnapshot, query, where, orderBy, serverTimestamp } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
@@ -28,26 +28,31 @@ export default function SupportPage() {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  async function loadTickets() {
+  useEffect(() => {
     if (!merchant) return
     setLoading(true)
-    try {
-      const snap = await getDocs(query(
-        collection(db, 'supportTickets'),
-        where('merchantId', '==', merchant.id),
-        orderBy('createdAt', 'desc')
-      ))
-      setTickets(snap.docs.map((d) => ({ id: d.id, ...d.data() } as SupportTicket)))
-    } catch (err) {
-      console.error(err)
-      toast.error('Talepler yüklenemedi. Lütfen sayfayı yenileyin.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
+    const storageKey = `sadex_seen_replies_${merchant.id}`
+    const unsub = onSnapshot(
+      query(collection(db, 'supportTickets'), where('merchantId', '==', merchant.id), orderBy('createdAt', 'desc')),
+      (snap) => {
+        const loaded = snap.docs.map((d) => ({ id: d.id, ...d.data() } as SupportTicket))
+        setTickets(loaded)
+        setLoading(false)
+        // Yanıtlı biletleri "görüldü" olarak işaretle
+        const repliedIds = loaded.filter((t) => t.adminReply).map((t) => t.id)
+        if (repliedIds.length > 0) {
+          try {
+            const existing: string[] = JSON.parse(localStorage.getItem(storageKey) ?? '[]')
+            localStorage.setItem(storageKey, JSON.stringify([...new Set([...existing, ...repliedIds])]))
+          } catch { /* ignore */ }
+          window.dispatchEvent(new CustomEvent('support-replies-seen'))
+        }
+      },
+      (err) => { console.error(err); toast.error('Talepler yüklenemedi. Lütfen sayfayı yenileyin.'); setLoading(false) },
+    )
+    return unsub
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void loadTickets() }, [merchant?.id])
+  }, [merchant?.id])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -76,7 +81,6 @@ export default function SupportPage() {
       setShowForm(false)
       setSubject('')
       setMessage('')
-      await loadTickets()
     } catch (err) {
       console.error(err)
       const msg = err instanceof Error ? err.message : String(err)

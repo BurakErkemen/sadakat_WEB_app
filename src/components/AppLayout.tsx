@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
+import { collection, onSnapshot, query, where } from 'firebase/firestore'
+import toast from 'react-hot-toast'
 import { auth } from '@/firebase/auth'
+import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
 import { useInactivityLogout } from '@/hooks/useInactivityLogout'
 import { MerchantSubProvider, useMerchantSub } from '@/contexts/MerchantSubContext'
@@ -43,6 +46,41 @@ function AppLayoutInner() {
   const { merchant, sub, loading } = useMerchantSub()
   useInactivityLogout()
   const [showMore, setShowMore] = useState(false)
+  const [supportUnread, setSupportUnread] = useState(0)
+  const isFirstSupportLoad = useRef(true)
+  const notifiedIds = useRef(new Set<string>())
+
+  useEffect(() => {
+    const mid = merchant?.id
+    if (!mid) { setSupportUnread(0); return }
+    isFirstSupportLoad.current = true
+    notifiedIds.current = new Set()
+    const storageKey = `sadex_seen_replies_${mid}`
+    function getSeenIds() {
+      try { return new Set<string>(JSON.parse(localStorage.getItem(storageKey) ?? '[]')) }
+      catch { return new Set<string>() }
+    }
+    const unsub = onSnapshot(
+      query(collection(db, 'supportTickets'), where('merchantId', '==', mid)),
+      (snap) => {
+        const seenIds = getSeenIds()
+        const unread = snap.docs.filter((d) => d.data().adminReply && !seenIds.has(d.id))
+        setSupportUnread(unread.length)
+        if (!isFirstSupportLoad.current) {
+          const fresh = unread.filter((d) => !notifiedIds.current.has(d.id))
+          if (fresh.length > 0) {
+            fresh.forEach((d) => notifiedIds.current.add(d.id))
+            toast.success('Destek talebinize yanıt geldi!', { duration: 6000, icon: '💬' })
+          }
+        }
+        isFirstSupportLoad.current = false
+      },
+      console.error,
+    )
+    function onSeen() { setSupportUnread(0) }
+    window.addEventListener('support-replies-seen', onSeen)
+    return () => { unsub(); window.removeEventListener('support-replies-seen', onSeen) }
+  }, [merchant?.id])
 
   const endMs = sub?.currentPeriodEnd?.toDate().getTime() ?? 0
   const isExpired = endMs > 0 && endMs < Date.now()
@@ -158,7 +196,14 @@ function AppLayoutInner() {
                 <NavLink key={item.to} to={item.to} onClick={() => setShowMore(false)}
                   className={({ isActive }) =>
                     `flex flex-col items-center gap-1 py-4 text-xs transition-colors ${isActive ? 'text-indigo-600' : 'text-gray-600 hover:text-gray-900'}`}>
-                  <span className="text-2xl leading-none">{item.icon}</span>
+                  <span className="relative text-2xl leading-none">
+                    {item.icon}
+                    {item.to === '/app/support' && supportUnread > 0 && (
+                      <span className="absolute -top-1 -right-1.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5 leading-none">
+                        {supportUnread}
+                      </span>
+                    )}
+                  </span>
                   <span>{item.label}</span>
                 </NavLink>
               ))}
@@ -187,7 +232,12 @@ function AppLayoutInner() {
           ))}
           <button onClick={() => setShowMore((v) => !v)}
             className={`flex-1 flex flex-col items-center py-2 text-xs gap-0.5 transition-colors ${showMore ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <span className="text-lg leading-none">⋯</span>
+            <span className="relative text-lg leading-none">
+              ⋯
+              {supportUnread > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
+              )}
+            </span>
             <span className="leading-none">Daha</span>
           </button>
         </div>
