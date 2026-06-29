@@ -85,7 +85,7 @@ export default function LandingPage() {
       <nav className="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-gray-100">
         <div className="max-w-5xl mx-auto px-5 h-16 flex items-center justify-between">
           <div className="flex items-center">
-            <img src="/sadex.png" alt="Sadex" className="h-12 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-12 w-auto"
               style={{ objectFit: 'contain', maxWidth: '180px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </div>
@@ -341,7 +341,7 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto px-5 space-y-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <img src="/sadex.png" alt="" className="h-10 w-auto"
+              <img src="/logo.png" alt="" className="h-10 w-auto"
                 style={{ objectFit: 'contain', maxWidth: '150px' }}
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
               <span className="text-gray-300">·</span>

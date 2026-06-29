@@ -59,7 +59,7 @@ export default function VerifyEmailPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <Link to="/" className="inline-block mb-4">
-            <img src="/sadex.png" alt="Sadex" className="h-12 w-auto mx-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-12 w-auto mx-auto"
               style={{ objectFit: 'contain', maxWidth: '180px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>

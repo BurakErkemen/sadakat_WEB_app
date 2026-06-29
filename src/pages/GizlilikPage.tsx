@@ -6,7 +6,7 @@ export default function GizlilikPage() {
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
           <Link to="/">
-            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>
@@ -23,7 +23,7 @@ export default function GizlilikPage() {
           <section>
             <h2 className="font-semibold text-gray-900 text-base mb-2">1. Genel Bakış</h2>
             <p>
-              Sadex olarak gizliliğinize önem veriyoruz. Bu politika, platformumuzu kullanırken
+              Puaniva olarak gizliliğinize önem veriyoruz. Bu politika, platformumuzu kullanırken
               hangi verileri topladığımızı, nasıl kullandığımızı ve koruduğumuzu açıklamaktadır.
               KVKK uyumluluğuna ilişkin detaylar için{' '}
               <Link to="/kvkk" className="text-violet-600 hover:underline font-medium">KVKK Aydınlatma Metni</Link>'ni

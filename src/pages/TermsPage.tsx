@@ -6,7 +6,7 @@ export default function TermsPage() {
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
           <Link to="/">
-            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>
@@ -23,7 +23,7 @@ export default function TermsPage() {
           <section>
             <h2 className="font-semibold text-gray-900 text-base mb-2">1. Taraflar ve Kabul</h2>
             <p>
-              Bu Kullanım Koşulları, <strong>Cyan Danışmanlık</strong> ("Şirket") ile Sadex platformunu
+              Bu Kullanım Koşulları, <strong>Cyan Danışmanlık</strong> ("Şirket") ile Puaniva platformunu
               kullanan işletmeler ve bireyler ("Kullanıcı") arasındaki anlaşmayı düzenler.
               Platforma kaydolarak veya platformu kullanarak bu koşulları kabul etmiş sayılırsınız.
             </p>
@@ -32,7 +32,7 @@ export default function TermsPage() {
           <section>
             <h2 className="font-semibold text-gray-900 text-base mb-2">2. Hizmetin Tanımı</h2>
             <p>
-              Sadex; işletmelerin müşterilerine yönelik dijital sadakat kartı oluşturmasına,
+              Puaniva; işletmelerin müşterilerine yönelik dijital sadakat kartı oluşturmasına,
               damga/puan işlemi yapmasına ve ödül yönetimi gerçekleştirmesine olanak tanıyan
               bir SaaS (Hizmet Olarak Yazılım) platformudur.
             </p>
@@ -65,7 +65,7 @@ export default function TermsPage() {
             <h2 className="font-semibold text-gray-900 text-base mb-2">4A. İade ve Cayma Politikası</h2>
 
             <p className="mb-3">
-              Sadex, işletmelere yönelik (B2B) bir SaaS platformudur. Platform üzerinden yapılan
+              Puaniva, işletmelere yönelik (B2B) bir SaaS platformudur. Platform üzerinden yapılan
               abonelik satın alımları ticari amaçlı olup 6502 sayılı Tüketicinin Korunması Hakkında
               Kanun kapsamındaki tüketici cayma hakları bu sözleşmeye uygulanmaz.
             </p>

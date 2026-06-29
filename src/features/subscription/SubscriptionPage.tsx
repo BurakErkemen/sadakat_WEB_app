@@ -89,7 +89,7 @@ export default function SubscriptionPage() {
   )
 
   function buildContactMessage(planLabel: string, price: number): string {
-    return `Merhaba Sadex Ekibi,
+    return `Merhaba Puaniva Ekibi,
 
 ${merchant?.name ?? 'İşletmemiz'} olarak ${planLabel} planına geçmek istiyoruz.
 

@@ -24,6 +24,8 @@ export default function SettingsPage() {
   const [brandColor, setBrandColor] = useState('#6366f1')
   const [brandColor2, setBrandColor2] = useState('')
   const [useGradient, setUseGradient] = useState(false)
+  const [logoUrl, setLogoUrl] = useState('')
+  const [logoError, setLogoError] = useState(false)
   const [sector, setSector] = useState('')
   const [city, setCity] = useState('')
   const [district, setDistrict] = useState('')
@@ -41,6 +43,8 @@ export default function SettingsPage() {
     setBrandColor2(c2 || '#a855f7')
     setUseGradient(!!c2)
     setSector(merchant.sector ?? '')
+    setLogoUrl(merchant.logoUrl ?? '')
+    setLogoError(false)
     setCity(merchant.city ?? '')
     setDistrict(merchant.district ?? '')
   }, [merchant])
@@ -53,6 +57,7 @@ export default function SettingsPage() {
       await updateDoc(doc(db, 'merchants', merchant.id), {
         name,
         phone,
+        logoUrl: logoUrl.trim() || null,
         instagram: instagram || null,
         googleMapsUrl: googleMapsUrl || null,
         menuUrl: menuUrl || null,
@@ -85,6 +90,37 @@ export default function SettingsPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
+
+        {/* Logo */}
+        <div className="flex items-start gap-4">
+          <div className="shrink-0">
+            <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+              {logoUrl && !logoError ? (
+                <img
+                  src={logoUrl}
+                  alt="Logo"
+                  className="w-full h-full object-contain"
+                  onError={() => setLogoError(true)}
+                />
+              ) : (
+                <span className="text-3xl select-none">🏪</span>
+              )}
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Logo URL</label>
+            <input
+              type="url"
+              value={logoUrl}
+              onChange={(e) => { setLogoUrl(e.target.value); setLogoError(false) }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="https://example.com/logo.png"
+            />
+            <p className="text-xs text-gray-400 mt-1">Logonuzun direkt bağlantısını girin. Public sayfada ve müşteri kartında görünür.</p>
+            {logoError && <p className="text-xs text-red-500 mt-0.5">Resim yüklenemedi — URL'yi kontrol edin.</p>}
+          </div>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">İşletme Adı</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} required

@@ -96,7 +96,7 @@ function AppLayoutInner() {
       <div className="min-h-screen bg-gray-50 flex flex-col">
         <header className="bg-white border-b border-gray-200">
           <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
-            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </div>
@@ -124,7 +124,7 @@ function AppLayoutInner() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
           <Link to="/app">
-            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>
@@ -183,7 +183,7 @@ function AppLayoutInner() {
                 <span className="text-xl w-8 text-center">🏪</span>
                 <div>
                   <p className="font-medium text-gray-900 text-sm">İşletme Sayfam</p>
-                  <p className="text-xs text-gray-400">sadex.app/m/{merchant.slug}</p>
+                  <p className="text-xs text-gray-400">puaniva.app/m/{merchant.slug}</p>
                 </div>
                 <span className="ml-auto text-gray-300 text-xs">↗</span>
               </a>

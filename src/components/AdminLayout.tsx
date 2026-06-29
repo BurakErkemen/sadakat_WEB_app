@@ -20,8 +20,8 @@ export default function AdminLayout() {
         <div className="max-w-7xl mx-auto px-3 sm:px-6 min-h-14 py-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <img
-              src="/sadex.png"
-              alt="Sadex"
+              src="/logo.png"
+              alt="Puaniva"
               className="h-8 sm:h-9 w-auto max-w-[96px] sm:max-w-[140px]"
               style={{ objectFit: 'contain' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}

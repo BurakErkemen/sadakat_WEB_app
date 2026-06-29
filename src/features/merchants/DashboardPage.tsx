@@ -86,10 +86,18 @@ export default function DashboardPage() {
       <div className="rounded-2xl overflow-hidden" style={cardStyle}>
         <div className="p-5">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-black/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-black/20 backdrop-blur-sm flex items-center justify-center shrink-0 overflow-hidden relative">
               <span className="text-2xl font-black text-white">
                 {merchant.name[0]?.toLocaleUpperCase('tr')}
               </span>
+              {merchant.logoUrl && (
+                <img
+                  src={merchant.logoUrl}
+                  alt={merchant.name}
+                  className="absolute inset-0 w-full h-full object-contain"
+                  onError={(e) => e.currentTarget.remove()}
+                />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-extrabold text-white leading-tight truncate">{merchant.name}</h1>
@@ -105,7 +113,7 @@ export default function DashboardPage() {
             className="mt-4 flex items-center justify-between bg-black/15 hover:bg-black/25 transition-colors rounded-xl px-3 py-2.5"
           >
             <span className="text-sm font-medium text-white">🏪 İşletme Sayfam</span>
-            <span className="text-xs text-white/60">sadex.app/m/{merchant.slug} ↗</span>
+            <span className="text-xs text-white/60">puaniva.app/m/{merchant.slug} ↗</span>
           </a>
         </div>
       </div>

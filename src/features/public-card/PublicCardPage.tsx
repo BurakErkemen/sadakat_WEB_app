@@ -62,12 +62,18 @@ export default function PublicCardPage() {
         {/* İşletme başlığı */}
         <div className="text-center mb-6">
           <div
-            className="w-16 h-16 rounded-2xl mx-auto mb-3 flex items-center justify-center text-white text-2xl font-bold"
+            className="w-16 h-16 rounded-2xl mx-auto mb-3 flex items-center justify-center text-white text-2xl font-bold overflow-hidden relative"
             style={{ backgroundColor: brandColor }}
           >
-            {merchant?.logoUrl
-              ? <img src={merchant.logoUrl} alt="" className="w-full h-full object-cover rounded-2xl" />
-              : (merchant?.name?.[0] ?? '?')}
+            <span>{merchant?.name?.[0] ?? '?'}</span>
+            {merchant?.logoUrl && (
+              <img
+                src={merchant.logoUrl}
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain rounded-2xl"
+                onError={(e) => e.currentTarget.remove()}
+              />
+            )}
           </div>
           <h1 className="text-xl font-bold text-gray-900">{merchant?.name ?? '—'}</h1>
           <p className="text-sm text-gray-500">{merchant?.sector} · {merchant?.city}</p>
@@ -145,7 +151,7 @@ export default function PublicCardPage() {
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-300 mt-6">Sadex · Cyan Danışmanlık</p>
+        <p className="text-center text-xs text-gray-300 mt-6">Puaniva · Cyan Danışmanlık</p>
       </div>
     </div>
   )
@@ -166,7 +172,7 @@ function ErrorScreen({ message }: { message: string }) {
         <div className="text-4xl mb-4">😕</div>
         <h1 className="font-bold text-gray-900 text-lg mb-2">Kart Gösterilemiyor</h1>
         <p className="text-gray-500 text-sm">{message}</p>
-        <p className="text-xs text-gray-300 mt-6">Sadex</p>
+        <p className="text-xs text-gray-300 mt-6">Puaniva</p>
       </div>
     </div>
   )

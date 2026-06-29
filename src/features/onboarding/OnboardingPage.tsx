@@ -213,7 +213,7 @@ export default function OnboardingPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               İşletme Linki
-              <span className="text-gray-400 font-normal ml-1">(sadex.app/<strong>{slug || 'linkiniz'}</strong>)</span>
+              <span className="text-gray-400 font-normal ml-1">(puaniva.app/<strong>{slug || 'linkiniz'}</strong>)</span>
             </label>
             <input
               type="text"

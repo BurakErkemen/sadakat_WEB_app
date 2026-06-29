@@ -112,15 +112,19 @@ export default function PublicMerchantPage() {
       {/* Floating logo — wave sınırına konumlandırılmış */}
       <div className="flex justify-center -mt-14 relative z-10 mb-5">
         <div
-          className="w-24 h-24 rounded-2xl bg-white overflow-hidden flex items-center justify-center"
+          className="w-24 h-24 rounded-2xl bg-white overflow-hidden flex items-center justify-center relative"
           style={{
             boxShadow: `0 8px 32px ${brand}30, 0 0 0 4px white, 0 0 0 7px ${brand}30`,
           }}
         >
-          {merchant?.logoUrl ? (
-            <img src={merchant.logoUrl} alt={merchant.name ?? ''} className="w-full h-full object-cover" />
-          ) : (
-            <span className="text-4xl font-black select-none" style={{ color: brand }}>{initial}</span>
+          <span className="text-4xl font-black select-none" style={{ color: brand }}>{initial}</span>
+          {merchant?.logoUrl && (
+            <img
+              src={merchant.logoUrl}
+              alt={merchant.name ?? ''}
+              className="absolute inset-0 w-full h-full object-contain"
+              onError={(e) => e.currentTarget.remove()}
+            />
           )}
         </div>
       </div>

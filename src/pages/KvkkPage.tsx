@@ -6,7 +6,7 @@ export default function KvkkPage() {
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
           <Link to="/">
-            <img src="/sadex.png" alt="Sadex" className="h-9 w-auto"
+            <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>
@@ -25,7 +25,7 @@ export default function KvkkPage() {
             <p>
               Bu aydınlatma metni, 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında
               <strong> Cyan Danışmanlık</strong> ("Şirket") tarafından veri sorumlusu sıfatıyla hazırlanmıştır.
-              Sadex platformu üzerinden toplanan kişisel verileriniz Şirket tarafından işlenmektedir.
+              Puaniva platformu üzerinden toplanan kişisel verileriniz Şirket tarafından işlenmektedir.
             </p>
           </section>
 
