@@ -1,8 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { onAuthStateChanged, type User } from 'firebase/auth'
-import { doc, onSnapshot } from 'firebase/firestore'
-import { auth } from '@/firebase/auth'
-import { db } from '@/firebase/firestore'
+import type { User } from 'firebase/auth'
 import { ADMIN_UIDS } from '@/lib/constants'
 import type { UserProfile } from '@/types'
 
@@ -21,30 +18,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+    let unsubAuth: (() => void) | null = null
     let unsubProfile: (() => void) | null = null
 
-    const unsubAuth = onAuthStateChanged(auth, (u) => {
-      setUser(u)
+    // Firebase dinamik yüklenir: auth sayfaları Firebase inmeden boyanır (mobil LCP),
+    // oturum durumu SDK hazır olunca gelir; o ana kadar loading=true kalır.
+    void (async () => {
+      const [{ onAuthStateChanged }, { doc, onSnapshot }, { auth }, { db }] = await Promise.all([
+        import('firebase/auth'),
+        import('firebase/firestore'),
+        import('@/firebase/auth'),
+        import('@/firebase/firestore'),
+      ])
+      if (cancelled) return
 
-      if (unsubProfile) { unsubProfile(); unsubProfile = null }
+      unsubAuth = onAuthStateChanged(auth, (u) => {
+        setUser(u)
 
-      if (u) {
-        // onSnapshot: profil her değiştiğinde (onboarding, admin onayı vb.) context güncellenir
-        unsubProfile = onSnapshot(doc(db, 'users', u.uid), (snap) => {
-          setProfile(snap.exists() ? (snap.data() as UserProfile) : null)
-          setLoading(false)
-        }, () => {
+        if (unsubProfile) { unsubProfile(); unsubProfile = null }
+
+        if (u) {
+          // onSnapshot: profil her değiştiğinde (onboarding, admin onayı vb.) context güncellenir
+          unsubProfile = onSnapshot(doc(db, 'users', u.uid), (snap) => {
+            setProfile(snap.exists() ? (snap.data() as UserProfile) : null)
+            setLoading(false)
+          }, () => {
+            setProfile(null)
+            setLoading(false)
+          })
+        } else {
           setProfile(null)
           setLoading(false)
-        })
-      } else {
-        setProfile(null)
-        setLoading(false)
-      }
-    })
+        }
+      })
+    })()
 
     return () => {
-      unsubAuth()
+      cancelled = true
+      if (unsubAuth) unsubAuth()
       if (unsubProfile) unsubProfile()
     }
   }, [])

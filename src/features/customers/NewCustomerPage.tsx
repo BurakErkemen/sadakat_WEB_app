@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { collection, getDocs, query, where } from 'firebase/firestore'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db, createCustomerWithCard } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
@@ -10,8 +10,10 @@ import type { Campaign } from '@/types'
 export default function NewCustomerPage() {
   const { merchant } = useMerchant()
   const navigate = useNavigate()
+  const location = useLocation()
   const [fullName, setFullName] = useState('')
-  const [phone, setPhone] = useState('')
+  // Damga/Ödül ekranındaki "müşteri bulunamadı" akışından gelen telefon otomatik dolar
+  const [phone, setPhone] = useState((location.state as { phone?: string })?.phone ?? '')
   const [note, setNote] = useState('')
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId, setCampaignId] = useState('')
@@ -125,8 +127,16 @@ export default function NewCustomerPage() {
       </div>
 
       {campaigns.length === 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-          Aktif kampanya yok. Önce bir kampanya oluşturun ve aktif edin.
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+          <p className="text-sm text-amber-800">
+            Aktif kampanya yok. Müşteri ekleyebilmek için önce bir kampanya oluşturup aktif edin.
+          </p>
+          <Link
+            to="/app/campaigns/new"
+            className="tap-scale block w-full bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold text-center hover:bg-amber-700 transition-colors"
+          >
+            🎯 Kampanya Oluştur
+          </Link>
         </div>
       )}
 

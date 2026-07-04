@@ -121,7 +121,7 @@ export default function CampaignsPage() {
 
       {campaigns.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-400 mb-4">Henüz kampanya oluşturmadınız</p>
+          <p className="text-gray-500 font-medium mb-4">Damga toplamaya başlamak için önce bir kampanya oluşturun.</p>
           {!atCampaignLimit && (
             <Link to="/app/campaigns/new" className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold text-sm">
               İlk Kampanyayı Oluştur

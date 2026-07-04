@@ -5,22 +5,27 @@ import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
 import { formatPhone } from '@/lib/phone'
 import { formatDate } from '@/lib/dates'
+import ErrorState from '@/components/ErrorState'
 import type { Customer } from '@/types'
 
 export default function CustomersPage() {
   const { merchant, loading: mLoading } = useMerchant()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [search, setSearch] = useState('')
 
   useEffect(() => {
     if (!merchant) return
+    setLoading(true)
+    setLoadError(false)
     getDocs(query(collection(db, 'merchants', merchant.id, 'customers'), orderBy('createdAt', 'desc')))
       .then((snap) => setCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer))))
-      .catch(console.error)
+      .catch((err) => { console.error(err); setLoadError(true) })
       .finally(() => setLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [merchant?.id])
+  }, [merchant?.id, reloadKey])
 
   const filtered = customers.filter((c) => {
     const q = search.toLocaleLowerCase('tr')
@@ -41,6 +46,7 @@ export default function CustomersPage() {
   })
 
   if (mLoading || loading) return <LoadingSkeleton />
+  if (loadError) return <ErrorState onRetry={() => setReloadKey((k) => k + 1)} />
 
   return (
     <div className="space-y-4">
@@ -61,8 +67,10 @@ export default function CustomersPage() {
 
       {filtered.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-400">
-            {search ? 'Arama sonucu bulunamadı' : 'Henüz müşteri eklemediniz'}
+          <p className="text-gray-500 font-medium">
+            {search
+              ? 'Arama sonucu bulunamadı'
+              : 'Henüz müşteri eklemediniz. İlk müşterinizi ekleyip kart linkini paylaşabilirsiniz.'}
           </p>
           {!search && (
             <Link to="/app/customers/new" className="mt-4 inline-block bg-indigo-600 text-white px-6 py-3 rounded-xl font-semibold text-sm">

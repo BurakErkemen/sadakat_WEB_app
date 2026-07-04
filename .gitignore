@@ -455,8 +455,3 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
-.env.example
-RAPOR.md
-src/firebase/firestore.ts
-firestore.rules
-*.rules

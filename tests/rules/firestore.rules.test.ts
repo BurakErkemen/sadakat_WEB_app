@@ -66,6 +66,80 @@ describeWithEmulator('firestore security rules', () => {
     await assertFails(getDocs(query(collection(anonymousDb, 'publicCards'))))
   })
 
+  it('rejects publicCards writes containing PII or extra fields', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', 'owner_1'), { status: 'approved', merchantId: 'merchant_1' })
+      await setDoc(doc(ctx.firestore(), 'merchants', 'merchant_1'), { ownerId: 'owner_1', name: 'Demo' })
+    })
+
+    const ownerDb = testEnv.authenticatedContext('owner_1').firestore()
+    const validCard = {
+      merchantId: 'merchant_1',
+      campaignId: 'campaign_1',
+      membershipId: 'membership_1',
+      cardToken: 'card_a',
+      currentStamps: 0,
+      status: 'active',
+      customerDisplayName: 'B**** E******',
+      lastUpdatedAt: new Date(),
+      createdAt: new Date(),
+    }
+
+    // Geçerli schema → başarılı
+    await assertSucceeds(setDoc(doc(ownerDb, 'publicCards', 'card_a'), validCard))
+
+    // PII alanlarıyla create → reddedilir
+    await assertFails(setDoc(doc(ownerDb, 'publicCards', 'card_b'), {
+      ...validCard, cardToken: 'card_b', phone: '5551112233',
+    }))
+    await assertFails(setDoc(doc(ownerDb, 'publicCards', 'card_c'), {
+      ...validCard, cardToken: 'card_c', fullName: 'Burak Erkemen',
+    }))
+    await assertFails(setDoc(doc(ownerDb, 'publicCards', 'card_d'), {
+      ...validCard, cardToken: 'card_d', customerId: 'cust_1',
+    }))
+
+    // Zorunlu alan eksik → reddedilir
+    const { customerDisplayName: _cdn, ...missingName } = validCard
+    await assertFails(setDoc(doc(ownerDb, 'publicCards', 'card_e'), {
+      ...missingName, cardToken: 'card_e',
+    }))
+
+    // Update ile PII alanı eklenemez
+    await assertFails(updateDoc(doc(ownerDb, 'publicCards', 'card_a'), {
+      normalizedPhone: '5551112233',
+    }))
+  })
+
+  it('locks publicCards binding fields on update', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', 'owner_1'), { status: 'approved', merchantId: 'merchant_1' })
+      await setDoc(doc(ctx.firestore(), 'merchants', 'merchant_1'), { ownerId: 'owner_1', name: 'Demo' })
+      await setDoc(doc(ctx.firestore(), 'publicCards', 'card_lock'), {
+        merchantId: 'merchant_1',
+        campaignId: 'campaign_1',
+        membershipId: 'membership_1',
+        cardToken: 'card_lock',
+        currentStamps: 0,
+        status: 'active',
+        customerDisplayName: 'B**** E******',
+        lastUpdatedAt: new Date(),
+        createdAt: new Date(),
+      })
+    })
+
+    const ownerDb = testEnv.authenticatedContext('owner_1').firestore()
+    const cardRef = doc(ownerDb, 'publicCards', 'card_lock')
+
+    await assertFails(updateDoc(cardRef, { merchantId: 'merchant_2' }))
+    await assertFails(updateDoc(cardRef, { campaignId: 'campaign_2' }))
+    await assertFails(updateDoc(cardRef, { membershipId: 'membership_2' }))
+    await assertFails(updateDoc(cardRef, { cardToken: 'other_token' }))
+
+    // İzinli alanlar güncellenebilir
+    await assertSucceeds(updateDoc(cardRef, { currentStamps: 1, lastUpdatedAt: new Date() }))
+  })
+
   it('prevents owners from updating subscription documents', async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'users', 'owner_1'), {
@@ -106,6 +180,20 @@ describeWithEmulator('firestore security rules', () => {
 
     const ownerDb = testEnv.authenticatedContext('owner_1').firestore()
 
+    // Allowlist dışı ekstra alan → reddedilir
+    await assertFails(setDoc(doc(ownerDb, 'merchants', 'merchant_1', 'subscription', 'current'), {
+      plan: 'trial',
+      status: 'trialing',
+      customLimit: 9999,
+    }))
+
+    // Deneme süresi sınırı aşılmış → reddedilir
+    await assertFails(setDoc(doc(ownerDb, 'merchants', 'merchant_1', 'subscription', 'current'), {
+      plan: 'trial',
+      status: 'trialing',
+      currentPeriodEnd: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+    }))
+
     await assertSucceeds(setDoc(doc(ownerDb, 'merchants', 'merchant_1', 'subscription', 'current'), {
       plan: 'trial',
       status: 'trialing',
@@ -114,6 +202,12 @@ describeWithEmulator('firestore security rules', () => {
     await assertFails(setDoc(doc(ownerDb, 'merchants', 'merchant_1', 'subscription', 'other'), {
       plan: 'pro',
       status: 'active',
+    }))
+
+    // 'current' dışındaki docId'ye trial bile oluşturulamaz
+    await assertFails(setDoc(doc(ownerDb, 'merchants', 'merchant_1', 'subscription', 'backup'), {
+      plan: 'trial',
+      status: 'trialing',
     }))
   })
 
@@ -370,6 +464,9 @@ describeWithEmulator('firestore security rules', () => {
       await setDoc(doc(ctx.firestore(), 'merchants', 'merchant_2', 'transactions', 'tx_2'), {
         stamps: 1, createdAt: new Date(),
       })
+      await setDoc(doc(ctx.firestore(), 'merchants', 'merchant_1', 'transactions', 'tx_1'), {
+        type: 'stamp_add', amount: 1, createdBy: 'owner_1', createdAt: new Date(),
+      })
     })
 
     const owner1Db = testEnv.authenticatedContext('owner_1').firestore()
@@ -382,10 +479,11 @@ describeWithEmulator('firestore security rules', () => {
     await assertFails(setDoc(doc(owner1Db, 'merchants', 'merchant_2', 'transactions', 'tx_new'), {
       stamps: 1, createdAt: new Date(),
     }))
-    // İşlemler değiştirilemez / silinemez
-    await assertFails(updateDoc(doc(owner1Db, 'merchants', 'merchant_1', 'transactions', 'tx_2'), {
-      stamps: 99,
+    // İşlemler sahibi tarafından bile değiştirilemez / silinemez (immutable audit)
+    await assertFails(updateDoc(doc(owner1Db, 'merchants', 'merchant_1', 'transactions', 'tx_1'), {
+      amount: 99,
     }))
+    await assertFails(deleteDoc(doc(owner1Db, 'merchants', 'merchant_1', 'transactions', 'tx_1')))
   })
 
   it('allows admin to update user status', async () => {

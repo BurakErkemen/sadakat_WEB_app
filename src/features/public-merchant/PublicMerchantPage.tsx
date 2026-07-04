@@ -1,10 +1,27 @@
 import { useEffect, useState } from 'react'
 import { doc, getDoc } from 'firebase/firestore'
+import { onAuthStateChanged } from 'firebase/auth'
 import { useParams, Link } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
-import { useAuth } from '@/features/auth/AuthContext'
+import { auth } from '@/firebase/auth'
 import { brandStyle } from '@/lib/utils'
 import type { Merchant, Campaign } from '@/types'
+
+// Public rota AuthProvider dışında kaldığı için hafif yerel oturum kontrolü:
+// giriş yapmış ve işletmesi olan kullanıcıya "Panele Dön" gösterilir.
+function useHasPanel(): boolean {
+  const [hasPanel, setHasPanel] = useState(false)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) { setHasPanel(false); return }
+      getDoc(doc(db, 'users', u.uid))
+        .then((s) => setHasPanel(s.exists() && Boolean(s.data()['merchantId'])))
+        .catch(() => setHasPanel(false))
+    })
+    return unsub
+  }, [])
+  return hasPanel
+}
 
 type State = 'loading' | 'not_found' | 'inactive' | 'ready'
 
@@ -17,7 +34,7 @@ function toInstagramUrl(val: string): string {
 
 export default function PublicMerchantPage() {
   const { slug } = useParams<{ slug: string }>()
-  const { profile } = useAuth()
+  const hasPanel = useHasPanel()
   const [state, setState] = useState<State>('loading')
   const [merchant, setMerchant] = useState<Merchant | null>(null)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -59,6 +76,13 @@ export default function PublicMerchantPage() {
     void load()
   }, [slug])
 
+  useEffect(() => {
+    if (merchant?.name) {
+      document.title = `${merchant.name} — Puaniva`
+      return () => { document.title = 'Puaniva — Dijital Sadakat Kartı' }
+    }
+  }, [merchant?.name])
+
   if (state === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -78,7 +102,6 @@ export default function PublicMerchantPage() {
   const brand = merchant?.brandColor ?? '#6366f1'
   const brand2 = merchant?.brandColor2 ?? null
   const headerStyle = brandStyle(brand, brand2)
-  const initial = merchant?.name?.[0]?.toLocaleUpperCase('tr') ?? '?'
   const igHandle = merchant?.instagram ? merchant.instagram.replace(/^@/, '') : null
   const igUrl = merchant?.instagram ? toInstagramUrl(merchant.instagram) : null
 
@@ -86,16 +109,19 @@ export default function PublicMerchantPage() {
     <div className="min-h-screen bg-gray-50">
 
       {/* Merchant owner banner — sadece giriş yapmış işletme sahipleri görür */}
-      {profile?.merchantId && (
+      {hasPanel && (
         <div className="bg-indigo-600 text-white text-center text-xs py-2 px-4 flex items-center justify-center gap-3">
           <span>İşletme panelinizi görüyorsunuz</span>
           <Link to="/app" className="underline font-semibold hover:text-indigo-200">← Panele Dön</Link>
         </div>
       )}
 
-      {/* Hero header — sadece metin, logo dışarıda */}
-      <div className="relative pt-12 pb-20 px-6 text-white" style={headerStyle}>
+      {/* Hero */}
+      <div className="relative pt-10 pb-16 px-6 text-white" style={headerStyle}>
         <div className="max-w-sm mx-auto text-center">
+          <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-2xl font-black mx-auto mb-3 select-none">
+            {merchant?.name?.[0]?.toLocaleUpperCase('tr') ?? '?'}
+          </div>
           <h1 className="text-2xl font-extrabold">{merchant?.name}</h1>
           <p className="text-sm text-white/70 mt-1">{merchant?.sector} · {merchant?.city}, {merchant?.district}</p>
           {igHandle && igUrl && (
@@ -105,31 +131,10 @@ export default function PublicMerchantPage() {
             </a>
           )}
         </div>
-        {/* Wave geçişi */}
         <div className="absolute bottom-0 left-0 right-0 h-10 bg-gray-50 rounded-t-[2.5rem]" />
       </div>
 
-      {/* Floating logo — wave sınırına konumlandırılmış */}
-      <div className="flex justify-center -mt-14 relative z-10 mb-5">
-        <div
-          className="w-24 h-24 rounded-2xl bg-white overflow-hidden flex items-center justify-center relative"
-          style={{
-            boxShadow: `0 8px 32px ${brand}30, 0 0 0 4px white, 0 0 0 7px ${brand}30`,
-          }}
-        >
-          <span className="text-4xl font-black select-none" style={{ color: brand }}>{initial}</span>
-          {merchant?.logoUrl && (
-            <img
-              src={merchant.logoUrl}
-              alt={merchant.name ?? ''}
-              className="absolute inset-0 w-full h-full object-contain"
-              onError={(e) => e.currentTarget.remove()}
-            />
-          )}
-        </div>
-      </div>
-
-      <div className="max-w-sm mx-auto px-4 pb-5 space-y-4">
+      <div className="max-w-sm mx-auto px-4 pt-5 pb-5 space-y-4">
 
         {/* Kampanyalar */}
         {campaigns.length > 0 ? campaigns.map((campaign) => {
@@ -289,16 +294,16 @@ export default function PublicMerchantPage() {
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-300 pb-4">SadeX · Cyan Danışmanlık</p>
+        <p className="text-center text-xs text-gray-300 pb-4">Puaniva · Cyan Danışmanlık</p>
       </div>
     </div>
   )
 }
 
 function InfoScreen({ icon, title, message }: { icon: string; title: string; message: string }) {
-  const { profile } = useAuth()
-  const backTo = profile?.merchantId ? '/app' : '/'
-  const backLabel = profile?.merchantId ? '← Panele Dön' : '← Ana Sayfaya Dön'
+  const hasPanel = useHasPanel()
+  const backTo = hasPanel ? '/app' : '/'
+  const backLabel = hasPanel ? '← Panele Dön' : '← Ana Sayfaya Dön'
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="text-center max-w-xs">

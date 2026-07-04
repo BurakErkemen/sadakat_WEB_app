@@ -8,6 +8,7 @@ import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
 import { useInactivityLogout } from '@/hooks/useInactivityLogout'
 import { MerchantSubProvider, useMerchantSub } from '@/contexts/MerchantSubContext'
+import { trapTabKey } from '@/lib/focusTrap'
 
 const PRIMARY_NAV = [
   { to: '/app', label: 'Ana Sayfa', icon: '🏠', end: true },
@@ -49,6 +50,25 @@ function AppLayoutInner() {
   const [supportUnread, setSupportUnread] = useState(0)
   const isFirstSupportLoad = useRef(true)
   const notifiedIds = useRef(new Set<string>())
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const moreButtonRef = useRef<HTMLButtonElement>(null)
+
+  // "Daha" sheet erişilebilirliği: Escape ile kapanır, açılınca odak sheet'e taşınır,
+  // kapanınca odak tetikleyen butona geri döner.
+  useEffect(() => {
+    if (!showMore) return
+    const trigger = moreButtonRef.current
+    sheetRef.current?.focus()
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setShowMore(false); return }
+      trapTabKey(sheetRef.current, e) // odak sheet dışına kaçmasın
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      trigger?.focus()
+    }
+  }, [showMore])
 
   useEffect(() => {
     const mid = merchant?.id
@@ -119,9 +139,9 @@ function AppLayoutInner() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 overflow-x-hidden">
       {/* Top Bar */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header className="bg-white/85 backdrop-blur-md border-b border-gray-200/70 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
           <Link to="/app">
             <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
@@ -165,15 +185,22 @@ function AppLayoutInner() {
       )}
 
       {/* Main content */}
-      <main className="max-w-lg mx-auto px-4 py-6 pb-24">
+      <main className="max-w-lg mx-auto px-4 py-6 pb-28 animate-fade-in-up">
         {loading ? <ContentSkeleton /> : <Outlet />}
       </main>
 
       {/* "Daha Fazla" slide-up sheet */}
       {showMore && (
         <>
-          <div className="fixed inset-0 bg-black bg-opacity-30 z-20" onClick={() => setShowMore(false)} />
-          <div className="fixed bottom-16 left-0 right-0 z-30 bg-white rounded-t-2xl border-t border-gray-200 shadow-xl max-w-lg mx-auto pb-2">
+          <div className="fixed inset-0 bg-black/35 backdrop-blur-[2px] z-20" onClick={() => setShowMore(false)} aria-hidden="true" />
+          <div
+            ref={sheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Diğer sayfalar"
+            tabIndex={-1}
+            className="fixed bottom-16 left-0 right-0 z-30 bg-white rounded-t-3xl border-t border-gray-100 shadow-2xl max-w-lg mx-auto pb-2 overflow-y-auto max-h-[80vh] animate-slide-up focus:outline-none"
+          >
             <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-3 mb-4" />
 
             {merchant && (
@@ -220,18 +247,27 @@ function AppLayoutInner() {
       )}
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10">
-        <div className="max-w-lg mx-auto flex">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-gray-200/70 z-10 pb-safe">
+        <div className="max-w-lg mx-auto flex px-1 py-1">
           {PRIMARY_NAV.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end}
               className={({ isActive }) =>
-                `flex-1 flex flex-col items-center py-2 text-xs gap-0.5 transition-colors ${isActive ? 'text-indigo-600' : 'text-gray-400'}`}>
-              <span className="text-lg leading-none">{item.icon}</span>
-              <span className="leading-none">{item.label}</span>
+                `flex-1 flex flex-col items-center py-1.5 text-[11px] gap-0.5 rounded-xl mx-0.5 transition-all ${
+                  isActive ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-gray-400 active:bg-gray-50'
+                }`}>
+              {({ isActive }) => (
+                <>
+                  <span className={`text-lg leading-none transition-transform ${isActive ? 'scale-110' : ''}`}>{item.icon}</span>
+                  <span className="leading-none">{item.label}</span>
+                </>
+              )}
             </NavLink>
           ))}
-          <button onClick={() => setShowMore((v) => !v)}
-            className={`flex-1 flex flex-col items-center py-2 text-xs gap-0.5 transition-colors ${showMore ? 'text-indigo-600' : 'text-gray-400'}`}>
+          <button ref={moreButtonRef} onClick={() => setShowMore((v) => !v)}
+            aria-haspopup="dialog" aria-expanded={showMore}
+            className={`flex-1 flex flex-col items-center py-1.5 text-[11px] gap-0.5 rounded-xl mx-0.5 transition-all ${
+              showMore ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-gray-400 active:bg-gray-50'
+            }`}>
             <span className="relative text-lg leading-none">
               ⋯
               {supportUnread > 0 && (

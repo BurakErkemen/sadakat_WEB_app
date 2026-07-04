@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { doc, getDoc, collection, getDocs, query, where, orderBy, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore'
+import { doc, getDoc, collection, getDocs, query, where, orderBy, writeBatch, serverTimestamp } from 'firebase/firestore'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { db, enrollCustomerInCampaign } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
 import { formatPhone, normalizePhone } from '@/lib/phone'
 import { formatDate, formatDateTime } from '@/lib/dates'
+import { maskName } from '@/lib/utils'
 import type { Customer, Membership, Campaign, Transaction } from '@/types'
 
 const TX_LABELS: Record<string, string> = {
@@ -43,7 +44,19 @@ export default function CustomerDetailPage() {
     if (!merchant || !customer) return
     setDeleting(true)
     try {
-      await deleteDoc(doc(db, 'merchants', merchant.id, 'customers', customer.id))
+      // Müşteri + tüm üyelikleri + public kartları tek batch'te silinir (orphan kart kalmaz)
+      const memSnap = await getDocs(query(
+        collection(db, 'merchants', merchant.id, 'memberships'),
+        where('customerId', '==', customer.id)
+      ))
+      const batch = writeBatch(db)
+      memSnap.docs.forEach((d) => {
+        const cardToken = d.data()['cardToken'] as string | undefined
+        if (cardToken) batch.delete(doc(db, 'publicCards', cardToken))
+        batch.delete(d.ref)
+      })
+      batch.delete(doc(db, 'merchants', merchant.id, 'customers', customer.id))
+      await batch.commit()
       toast.success('Müşteri silindi')
       navigate('/app/customers')
     } catch (err) {
@@ -131,14 +144,35 @@ export default function CustomerDetailPage() {
     if (dupErr) { setEditPhoneError(dupErr); return }
     setEditSaving(true)
     try {
-      await updateDoc(doc(db, 'merchants', merchant.id, 'customers', customer.id), {
-        fullName: editName.trim(),
+      const trimmedName = editName.trim()
+      const batch = writeBatch(db)
+
+      // Müşteri dokümanı
+      batch.update(doc(db, 'merchants', merchant.id, 'customers', customer.id), {
+        fullName: trimmedName,
         phone: editPhone.trim(),
         normalizedPhone: norm,
         note: editNote.trim() || null,
         updatedAt: serverTimestamp(),
       })
-      setCustomer((prev) => prev ? { ...prev, fullName: editName.trim(), phone: editPhone.trim(), normalizedPhone: norm, note: editNote.trim() || null } : prev)
+
+      // Bu müşteriye ait tüm public kartları güncelle (aktif + pasif)
+      const allMemSnap = await getDocs(query(
+        collection(db, 'merchants', merchant.id, 'memberships'),
+        where('customerId', '==', customer.id)
+      ))
+      allMemSnap.docs.forEach((d) => {
+        const cardToken = d.data()['cardToken'] as string
+        if (cardToken) {
+          batch.update(doc(db, 'publicCards', cardToken), {
+            customerDisplayName: maskName(trimmedName), // public dokümanda tam ad tutulmaz
+            lastUpdatedAt: serverTimestamp(),
+          })
+        }
+      })
+
+      await batch.commit()
+      setCustomer((prev) => prev ? { ...prev, fullName: trimmedName, phone: editPhone.trim(), normalizedPhone: norm, note: editNote.trim() || null } : prev)
       toast.success('Müşteri bilgileri güncellendi')
       setEditing(false)
     } catch (err) {
@@ -282,7 +316,7 @@ export default function CustomerDetailPage() {
                 <p className="text-xs text-gray-400">{formatDate(customer.createdAt)}</p>
                 <button onClick={startEdit}
                   className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                  title="Düzenle">
+                  title="Düzenle" aria-label="Müşteri bilgilerini düzenle">
                   ✏️
                 </button>
               </div>
@@ -381,10 +415,33 @@ export default function CustomerDetailPage() {
             </div>
           </div>
 
-          <div className="text-xs text-gray-400 space-y-0.5">
-            <p>Kart linki: <span className="font-mono">/c/{membership.cardToken.slice(0, 12)}…</span></p>
-            <p>Oluşturulma: {formatDate(membership.createdAt)}</p>
+          {/* Kart linki */}
+          <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-gray-500">Müşteri Kart Linki</p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(`${window.location.origin}/c/${membership.cardToken}`)
+                    toast.success('Link kopyalandı!')
+                  }}
+                  className="text-xs bg-white border border-gray-200 text-gray-600 hover:text-indigo-600 hover:border-indigo-300 px-2 py-1 rounded-lg transition-colors"
+                >
+                  📋 Kopyala
+                </button>
+                <a
+                  href={`/c/${membership.cardToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs bg-indigo-600 text-white hover:bg-indigo-700 px-2 py-1 rounded-lg transition-colors"
+                >
+                  ↗ Aç
+                </a>
+              </div>
+            </div>
+            <p className="text-xs font-mono text-gray-400 break-all">/c/{membership.cardToken}</p>
           </div>
+          <p className="text-xs text-gray-400">Oluşturulma: {formatDate(membership.createdAt)}</p>
         </div>
       ) : (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
@@ -424,7 +481,10 @@ export default function CustomerDetailPage() {
       {/* Müşteri sil */}
       <div className="bg-white rounded-2xl border border-red-100 p-5">
         <p className="font-semibold text-gray-900 mb-1">Tehlikeli Alan</p>
-        <p className="text-xs text-gray-400 mb-3">Müşteri kaydı kalıcı olarak silinir. İşlemler korunur.</p>
+        <p className="text-xs text-gray-400 mb-3">
+          Müşteri kaydı, tüm kampanya üyelikleri ve sadakat kartları kalıcı olarak silinir;
+          müşterinin kart linki artık açılmaz. İşlem geçmişi denetim için saklanır.
+        </p>
         {confirmDelete ? (
           <div className="space-y-2">
             <p className="text-sm text-red-700 font-medium">Emin misiniz? Bu işlem geri alınamaz.</p>

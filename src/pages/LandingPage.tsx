@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getDoc, doc } from 'firebase/firestore'
-import { onAuthStateChanged } from 'firebase/auth'
-import { db } from '@/firebase/firestore'
-import { auth } from '@/firebase/auth'
 
 const PLAN_META = [
   {
@@ -42,15 +38,36 @@ export default function LandingPage() {
   const [configLoading, setConfigLoading] = useState(true)
 
   useEffect(() => {
-    // Oturum açık kullanıcıyı panele yönlendir, çıkış yaptırma
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) navigate('/app', { replace: true })
-    })
-    getDoc(doc(db, 'config', 'pricing'))
-      .then((snap) => { if (snap.exists()) setRemoteConfig(snap.data() as RemoteConfig) })
-      .catch(() => null)
-      .finally(() => setConfigLoading(false))
-    return unsub
+    // Firebase ilk boyamayı bloklamasın diye dinamik import edilir:
+    // landing'in initial bundle'ı Firebase içermez (mobil LCP için kritik).
+    let cancelled = false
+    let unsub: (() => void) | undefined
+
+    void (async () => {
+      try {
+        const [{ onAuthStateChanged }, { getDoc, doc }, { auth }, { db }] = await Promise.all([
+          import('firebase/auth'),
+          import('firebase/firestore'),
+          import('@/firebase/auth'),
+          import('@/firebase/firestore'),
+        ])
+        if (cancelled) return
+
+        // Oturum açık kullanıcıyı panele yönlendir, çıkış yaptırma
+        unsub = onAuthStateChanged(auth, (user) => {
+          if (user) navigate('/app', { replace: true })
+        })
+
+        const snap = await getDoc(doc(db, 'config', 'pricing'))
+        if (!cancelled && snap.exists()) setRemoteConfig(snap.data() as RemoteConfig)
+      } catch {
+        // Fiyat config'i inmezse varsayılan PLAN_META fiyatları gösterilir
+      } finally {
+        if (!cancelled) setConfigLoading(false)
+      }
+    })()
+
+    return () => { cancelled = true; unsub?.() }
   }, [navigate])
 
   function getPrice(planId: string, cycle: 'monthly' | 'yearly'): number {
@@ -90,11 +107,11 @@ export default function LandingPage() {
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </div>
           <div className="flex items-center gap-3">
-            <Link to="/login" className="text-sm text-gray-500 hover:text-gray-900 transition-colors px-3 py-2">
+            <Link to="/login" className="inline-flex items-center min-h-[44px] text-sm text-gray-500 hover:text-gray-900 transition-colors px-3">
               Giriş Yap
             </Link>
             <Link to="/register"
-              className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm px-4 py-2 rounded-xl font-semibold hover:from-violet-700 hover:to-indigo-700 transition-all shadow-sm shadow-violet-200">
+              className="inline-flex items-center min-h-[44px] bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm px-4 rounded-xl font-semibold hover:from-violet-700 hover:to-indigo-700 transition-all shadow-sm shadow-violet-200">
               Başlayın
             </Link>
           </div>
@@ -105,8 +122,9 @@ export default function LandingPage() {
       <section className="relative overflow-hidden">
         {/* Arka plan gradyanı */}
         <div className="absolute inset-0 bg-gradient-to-br from-violet-50 via-white to-indigo-50 -z-10" />
-        <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-violet-100/60 to-transparent rounded-full blur-3xl -z-10" />
-        <div className="absolute bottom-0 left-0 w-72 h-72 bg-gradient-to-tr from-indigo-100/50 to-transparent rounded-full blur-3xl -z-10" />
+        {/* Mobilde küçük blur alanı — paint maliyeti düşük kalsın */}
+        <div className="absolute top-0 right-0 w-56 h-56 sm:w-96 sm:h-96 bg-gradient-to-bl from-violet-100/60 to-transparent rounded-full blur-3xl -z-10" />
+        <div className="absolute bottom-0 left-0 w-48 h-48 sm:w-72 sm:h-72 bg-gradient-to-tr from-indigo-100/50 to-transparent rounded-full blur-3xl -z-10" />
 
         <div className="max-w-5xl mx-auto px-5 pt-24 pb-28 text-center">
           <div className="inline-flex items-center gap-2 bg-white text-violet-700 text-xs font-semibold px-4 py-1.5 rounded-full mb-6 border border-violet-200 shadow-sm shadow-violet-100">
@@ -214,12 +232,12 @@ export default function LandingPage() {
             <div className="inline-flex bg-gray-100 rounded-xl p-1 gap-1">
               <button
                 onClick={() => setBillingCycle('monthly')}
-                className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${billingCycle === 'monthly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                className={`px-6 min-h-[44px] rounded-lg text-sm font-semibold transition-all ${billingCycle === 'monthly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 Aylık
               </button>
               <button
                 onClick={() => setBillingCycle('yearly')}
-                className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${billingCycle === 'yearly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                className={`px-6 min-h-[44px] rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${billingCycle === 'yearly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 Yıllık
                 <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">%{yearlyDiscountPct}</span>
               </button>
@@ -347,26 +365,27 @@ export default function LandingPage() {
               <span className="text-gray-300">·</span>
               <span className="text-sm text-gray-400">&copy; {new Date().getFullYear()}</span>
             </div>
-            <div className="flex items-center gap-5 text-sm text-gray-400">
-              <a href="mailto:info@cyandanismanlik.com" className="hover:text-violet-600 transition-colors">
+            {/* 320px'te tek satıra sığmaz → mobilde dikey stack, sm+ yatay */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-x-5 text-sm text-gray-400 text-center">
+              <a href="mailto:info@cyandanismanlik.com" className="inline-flex items-center min-h-[44px] max-w-full break-all hover:text-violet-600 transition-colors">
                 info@cyandanismanlik.com
               </a>
-              <span className="text-gray-200">|</span>
-              <span>
+              <span className="text-gray-200 hidden sm:inline">|</span>
+              <span className="inline-flex items-center min-h-[44px] flex-wrap justify-center">
                 Tasarım:{' '}
-                <a href="https://cyandanismanlik.com" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-700 transition-colors font-medium">
+                <a href="https://cyandanismanlik.com" target="_blank" rel="noopener noreferrer" className="inline-flex items-center min-h-[44px] px-1 text-violet-500 hover:text-violet-700 transition-colors font-medium">
                   Cyan Danışmanlık
                 </a>
               </span>
             </div>
           </div>
           {/* Yasal linkler */}
-          <div className="border-t border-gray-100 pt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-gray-400">
-            <Link to="/kvkk" className="hover:text-violet-600 transition-colors">KVKK Aydınlatma Metni</Link>
+          <div className="border-t border-gray-100 pt-2 flex flex-wrap items-center justify-center gap-x-4 text-xs text-gray-400">
+            <Link to="/kvkk" className="inline-flex items-center min-h-[44px] px-1 hover:text-violet-600 transition-colors">KVKK Aydınlatma Metni</Link>
             <span className="text-gray-200">·</span>
-            <Link to="/kullanim-kosullari" className="hover:text-violet-600 transition-colors">Kullanım Koşulları</Link>
+            <Link to="/kullanim-kosullari" className="inline-flex items-center min-h-[44px] px-1 hover:text-violet-600 transition-colors">Kullanım Koşulları</Link>
             <span className="text-gray-200">·</span>
-            <Link to="/gizlilik" className="hover:text-violet-600 transition-colors">Gizlilik Politikası</Link>
+            <Link to="/gizlilik" className="inline-flex items-center min-h-[44px] px-1 hover:text-violet-600 transition-colors">Gizlilik Politikası</Link>
           </div>
         </div>
       </footer>

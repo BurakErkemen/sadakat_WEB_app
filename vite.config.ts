@@ -10,6 +10,10 @@ export default defineConfig({
     },
   },
   build: {
+    // vendor-firebase (~700 KB) ve QRScanner (~340 KB) bilinçli olarak büyük:
+    // ikisi de initial yükte DEĞİL, yalnızca ihtiyaç anında dinamik iner.
+    // Varsayılan 500 KB uyarı eşiği bu lazy vendor chunk'ları için yükseltildi.
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks: {

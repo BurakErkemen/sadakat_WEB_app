@@ -5,12 +5,12 @@ export default function TermsPage() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
-          <Link to="/">
+          <Link to="/" className="inline-flex items-center min-h-[44px]">
             <img src="/logo.png" alt="Puaniva" className="h-9 w-auto"
               style={{ objectFit: 'contain', maxWidth: '140px' }}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           </Link>
-          <Link to="/" className="text-sm text-gray-500 hover:text-violet-600 transition-colors">← Ana Sayfa</Link>
+          <Link to="/" className="inline-flex items-center min-h-[44px] px-2 text-sm text-gray-500 hover:text-violet-600 transition-colors">← Ana Sayfa</Link>
         </div>
       </header>
 
@@ -103,7 +103,7 @@ export default function TermsPage() {
               </li>
               <li>
                 İade talepleri yalnızca{' '}
-                <a href="mailto:info@cyandanismanlik.com" className="text-violet-600 hover:underline font-medium">
+                <a href="mailto:info@cyandanismanlik.com" className="text-violet-600 hover:underline font-medium inline-block py-3 -my-3 px-0.5">
                   info@cyandanismanlik.com
                 </a>{' '}
                 adresine yazılı olarak iletilmelidir; talep, ödeme tarihinden itibaren <strong>7 gün</strong> içinde
@@ -136,9 +136,9 @@ export default function TermsPage() {
             <h2 className="font-semibold text-gray-900 text-base mb-2">7. Veri Koruma</h2>
             <p>
               Kişisel verilerin işlenmesine ilişkin detaylı bilgi için{' '}
-              <Link to="/kvkk" className="text-violet-600 hover:underline font-medium">KVKK Aydınlatma Metni</Link>'ni
+              <Link to="/kvkk" className="text-violet-600 hover:underline font-medium inline-block py-3 -my-3 px-0.5">KVKK Aydınlatma Metni</Link>'ni
               ve{' '}
-              <Link to="/gizlilik" className="text-violet-600 hover:underline font-medium">Gizlilik Politikası</Link>'nı
+              <Link to="/gizlilik" className="text-violet-600 hover:underline font-medium inline-block py-3 -my-3 px-0.5">Gizlilik Politikası</Link>'nı
               inceleyiniz.
             </p>
           </section>
@@ -172,7 +172,7 @@ export default function TermsPage() {
             <h2 className="font-semibold text-gray-900 text-base mb-2">11. İletişim</h2>
             <p>
               Sorularınız için:{' '}
-              <a href="mailto:info@cyandanismanlik.com" className="text-violet-600 hover:underline font-medium">
+              <a href="mailto:info@cyandanismanlik.com" className="text-violet-600 hover:underline font-medium inline-block py-3 -my-3 px-0.5">
                 info@cyandanismanlik.com
               </a>
             </p>

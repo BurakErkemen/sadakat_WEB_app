@@ -93,11 +93,21 @@ service cloud.firestore {
       match /subscription/{docId} {
         allow get:  if isMerchantOwner(merchantId) || isAdmin();
         allow list: if isAdmin();
-        // Sahip sadece trial oluşturabilir (onboarding); plan yükseltme/değişiklik sadece admin
+        // Sahip sadece onboarding'de TEK 'current' dokümanına trial oluşturabilir;
+        // alan allowlist'i ve deneme süresi sınırı ile. Plan yükseltme/değişiklik sadece admin.
         allow create: if isAdmin()
           || (isMerchantOwner(merchantId)
+              && docId == 'current'
               && request.resource.data.plan == 'trial'
-              && request.resource.data.status == 'trialing');
+              && request.resource.data.status == 'trialing'
+              && request.resource.data.keys().hasOnly([
+                   'plan', 'status', 'billingCycle',
+                   'currentPeriodStart', 'currentPeriodEnd',
+                   'createdAt', 'updatedAt'
+                 ])
+              && (!('currentPeriodEnd' in request.resource.data)
+                  || (request.resource.data.currentPeriodEnd is timestamp
+                      && request.resource.data.currentPeriodEnd <= request.time + duration.value(15, 'd'))));
         allow update, delete: if isAdmin();
       }
 
@@ -172,14 +182,28 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Public dokümanın izin verilen tüm alanları — PII (phone, fullName, customerId, note...) ASLA eklenmez
+    function publicCardKeys() {
+      return ['merchantId', 'campaignId', 'membershipId', 'cardToken',
+              'currentStamps', 'status', 'customerDisplayName',
+              'lastUpdatedAt', 'createdAt'];
+    }
+
     match /publicCards/{cardToken} {
       allow get:  if true;
       allow list: if false;
-      allow create: if isAdmin() || isMerchantOwner(request.resource.data.merchantId);
+
+      // Schema allowlist: owner/admin bile public dokümana PII veya ekstra alan yazamaz
+      allow create: if (isAdmin() || isMerchantOwner(request.resource.data.merchantId))
+        && request.resource.data.keys().hasOnly(publicCardKeys())
+        && request.resource.data.keys().hasAll(publicCardKeys());
+
       allow update: if (isAdmin() || isMerchantOwner(resource.data.merchantId))
+        && request.resource.data.keys().hasOnly(publicCardKeys())
         && request.resource.data.merchantId   == resource.data.merchantId
         && request.resource.data.campaignId   == resource.data.campaignId
-        && request.resource.data.membershipId == resource.data.membershipId;
+        && request.resource.data.membershipId == resource.data.membershipId
+        && request.resource.data.cardToken    == resource.data.cardToken;
       allow delete: if isAdmin() || isMerchantOwner(resource.data.merchantId);
     }
   }

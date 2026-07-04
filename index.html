@@ -6,6 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#6366f1" />
     <title>Puaniva — Dijital Sadakat Kartı</title>
+    <!-- LCP adayı logo erken insin -->
+    <link rel="preload" as="image" href="/logo.png" fetchpriority="high" />
+    <!-- Firebase bağlantıları için TLS el sıkışmasını öne al -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin />
+    <link rel="dns-prefetch" href="https://firestore.googleapis.com" />
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com" />
   </head>
   <body>
     <div id="root"></div>
