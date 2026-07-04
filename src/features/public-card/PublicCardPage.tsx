@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import { doc, getDoc } from 'firebase/firestore'
 import { useParams } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
+import { brandStyle, onBrandClasses } from '@/lib/utils'
 import type { PublicCard, Merchant, Campaign } from '@/types'
+
+function toInstagramUrl(val: string): string {
+  if (val.startsWith('http')) return val
+  return `https://instagram.com/${val.replace(/^@/, '').trim()}`
+}
 
 type LoadState = 'loading' | 'not_found' | 'passive' | 'active'
 
@@ -55,58 +61,58 @@ export default function PublicCardPage() {
   const stampsInProgress = requiredStamps > 0 ? currentStamps % requiredStamps : 0
   const displayStamps = hasReward ? stampsInProgress : currentStamps
   const brandColor = merchant?.brandColor ?? '#6366f1'
+  const cardStyle = brandStyle(brandColor, merchant?.brandColor2)
+  const on = onBrandClasses(brandColor, merchant?.brandColor2) // açık marka renginde koyu metin
+  const progressPct = requiredStamps > 0 ? Math.min(100, (displayStamps / requiredStamps) * 100) : 0
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-gray-50 to-gray-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm animate-fade-in-up">
         {/* İşletme başlığı */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-5">
           <div
-            className="w-16 h-16 rounded-2xl mx-auto mb-3 flex items-center justify-center text-white text-2xl font-bold overflow-hidden relative"
-            style={{ backgroundColor: brandColor }}
+            className={`w-16 h-16 rounded-2xl mx-auto mb-3 flex items-center justify-center ${on.text} text-2xl font-bold shadow-lg shadow-black/10`}
+            style={cardStyle}
           >
             <span>{merchant?.name?.[0] ?? '?'}</span>
-            {merchant?.logoUrl && (
-              <img
-                src={merchant.logoUrl}
-                alt=""
-                className="absolute inset-0 w-full h-full object-contain rounded-2xl"
-                onError={(e) => e.currentTarget.remove()}
-              />
-            )}
           </div>
-          <h1 className="text-xl font-bold text-gray-900">{merchant?.name ?? '—'}</h1>
+          <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">{merchant?.name ?? '—'}</h1>
           <p className="text-sm text-gray-500">{merchant?.sector} · {merchant?.city}</p>
         </div>
 
-        {/* Kart */}
+        {/* Sadakat kartı */}
         <div
-          className="rounded-3xl p-6 text-white shadow-lg mb-6"
-          style={{ backgroundColor: brandColor }}
+          className={`relative rounded-3xl p-6 ${on.text} shadow-xl shadow-black/15 mb-5 overflow-hidden`}
+          style={cardStyle}
         >
-          <div className="flex items-center justify-between mb-4">
+          {/* Parlaklık dokusu */}
+          <div className="pointer-events-none absolute -top-16 -right-16 w-48 h-48 rounded-full bg-white/15 blur-2xl" />
+          <div className="pointer-events-none absolute -bottom-20 -left-10 w-40 h-40 rounded-full bg-black/10 blur-2xl" />
+
+          <div className="relative flex items-start justify-between mb-4">
             <div>
-              <p className="text-xs opacity-70">Dijital İşletme Kartı</p>
-              <p className="font-bold text-lg">{card?.customerDisplayName ?? '—'}</p>
+              <p className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${on.faint}`}>Sadakat Kartı</p>
+              <p className="font-bold text-lg mt-0.5">{card?.customerDisplayName ?? '—'}</p>
             </div>
             {hasReward && (
-              <div className="bg-white bg-opacity-25 rounded-xl px-3 py-1.5 text-center">
-                <p className="text-xs font-bold">{rewardCount} ÖDÜL</p>
-                <p className="text-xl">🎁</p>
+              <div className={`${on.chip} backdrop-blur-sm rounded-2xl px-3 py-1.5 text-center animate-bounce-soft`}>
+                <p className="text-xl leading-none">🎁</p>
+                <p className="text-[10px] font-bold mt-1">{rewardCount} ÖDÜL</p>
               </div>
             )}
           </div>
 
-          {/* Damga ızgarası — sabit 40px daireler */}
+          {/* Damga ızgarası — kademeli pop animasyonu */}
           {!isPoints && requiredStamps > 0 && requiredStamps <= 30 && (
-            <div className="flex flex-wrap gap-2 mt-3">
+            <div className="relative flex flex-wrap gap-2 mt-3">
               {Array.from({ length: requiredStamps }).map((_, i) => (
                 <div
                   key={i}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-all ${
+                  style={i < displayStamps ? { animationDelay: `${i * 60}ms` } : undefined}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
                     i < displayStamps
-                      ? 'bg-white text-gray-700 shadow-sm'
-                      : 'bg-white bg-opacity-20 border border-white border-opacity-30'
+                      ? `${on.stampOn} shadow-md animate-stamp-pop`
+                      : `${on.stampOff} border border-dashed`
                   }`}
                 >
                   {i < displayStamps ? '✓' : ''}
@@ -115,43 +121,91 @@ export default function PublicCardPage() {
             </div>
           )}
 
-          <div className="mt-4 flex items-center justify-between text-sm opacity-80">
-            {hasReward ? (
-              <p>{stampsInProgress} / {requiredStamps} {label} · sonraki ödül</p>
-            ) : (
-              <>
-                <p>{displayStamps} / {requiredStamps} {label}</p>
-                {requiredStamps > 0 && <p>{requiredStamps - displayStamps} {label} kaldı</p>}
-              </>
-            )}
-          </div>
+          {/* Puan modu — büyük sayaç */}
+          {isPoints && (
+            <div className="relative mt-2">
+              <p className="text-4xl font-black tracking-tight">
+                {displayStamps}
+                <span className={`text-base font-semibold ${on.faint} ml-1.5`}>/ {requiredStamps} puan</span>
+              </p>
+            </div>
+          )}
+
+          {/* İlerleme çubuğu */}
+          {requiredStamps > 0 && (
+            <div className="relative mt-4">
+              <div className={`h-1.5 rounded-full ${on.bar} overflow-hidden`}>
+                <div
+                  className={`h-full rounded-full ${on.barFill} transition-[width] duration-700 ease-out`}
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <div className={`mt-2 flex items-center justify-between text-xs ${on.sub}`}>
+                {hasReward ? (
+                  <p>{stampsInProgress} / {requiredStamps} {label} · sonraki ödül</p>
+                ) : (
+                  <>
+                    <p>{displayStamps} / {requiredStamps} {label}</p>
+                    <p className="font-semibold">{requiredStamps - displayStamps} {label} kaldı</p>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Ödül kazanıldı */}
         {hasReward && (
-          <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center mb-4">
-            <p className="text-3xl mb-2">🎉</p>
-            <p className="font-bold text-green-800 text-lg">
+          <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-5 text-center mb-4 shadow-sm">
+            <p className="text-3xl mb-2 animate-bounce-soft inline-block">🎉</p>
+            <p className="font-extrabold text-green-800 text-lg">
               {rewardCount === 1 ? '1 Ödül Kazandınız!' : `${rewardCount} Ödül Kazandınız!`}
             </p>
             <p className="text-sm text-green-700 font-medium mt-1">{campaign?.rewardDescription}</p>
-            <p className="text-xs text-green-500 mt-2">İşletmeye gidip ödülünüzü kullandırın</p>
+            <p className="text-xs text-green-600/70 mt-2">İşletmeye gidip ödülünüzü kullandırın</p>
           </div>
         )}
 
         {/* Kampanya bilgisi */}
         {campaign && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-2">
-            <h2 className="font-semibold text-gray-900">{campaign.name}</h2>
-            {campaign.description && <p className="text-sm text-gray-500">{campaign.description}</p>}
-            <div className="bg-gray-50 rounded-xl p-3">
-              <p className="text-xs text-gray-400 uppercase font-medium tracking-wide">Ödülünüz</p>
-              <p className="font-semibold text-gray-900 mt-1">{campaign.rewardDescription}</p>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-2 mb-4">
+            <h2 className="font-bold text-gray-900">{campaign.name}</h2>
+            {campaign.description && <p className="text-sm text-gray-500 leading-relaxed">{campaign.description}</p>}
+            <div className="bg-amber-50/70 border border-amber-100 rounded-xl p-3 flex items-center gap-3">
+              <span className="text-xl">🎁</span>
+              <div>
+                <p className="text-[10px] text-amber-600 uppercase font-semibold tracking-wide">Ödülünüz</p>
+                <p className="font-semibold text-gray-900 text-sm mt-0.5">{campaign.rewardDescription}</p>
+              </div>
             </div>
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-300 mt-6">Puaniva · Cyan Danışmanlık</p>
+        {/* İşletme iletişim — tek dokunuşla ara / yol tarifi / Instagram */}
+        {merchant && (merchant.phone || merchant.instagram || merchant.googleMapsUrl) && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {merchant.phone && (
+              <a href={`tel:${merchant.phone}`}
+                className="tap-scale bg-white border border-gray-100 shadow-sm rounded-2xl py-3 flex flex-col items-center gap-1 text-xs font-medium text-gray-600">
+                <span className="text-lg">📞</span>Ara
+              </a>
+            )}
+            {merchant.googleMapsUrl && (
+              <a href={merchant.googleMapsUrl} target="_blank" rel="noopener noreferrer"
+                className="tap-scale bg-white border border-gray-100 shadow-sm rounded-2xl py-3 flex flex-col items-center gap-1 text-xs font-medium text-gray-600">
+                <span className="text-lg">📍</span>Yol Tarifi
+              </a>
+            )}
+            {merchant.instagram && (
+              <a href={toInstagramUrl(merchant.instagram)} target="_blank" rel="noopener noreferrer"
+                className="tap-scale bg-white border border-gray-100 shadow-sm rounded-2xl py-3 flex flex-col items-center gap-1 text-xs font-medium text-gray-600">
+                <span className="text-lg">📸</span>Instagram
+              </a>
+            )}
+          </div>
+        )}
+
+        <p className="text-center text-xs text-gray-300 mt-2 pb-safe">Puaniva · Cyan Danışmanlık</p>
       </div>
     </div>
   )

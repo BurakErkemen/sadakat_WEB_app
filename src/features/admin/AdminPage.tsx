@@ -289,7 +289,12 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
 }
 
 // ─── 1. İşletmeler ───────────────────────────────────────────────────────────
-type MerchantRow = Merchant & { subscription?: Subscription }
+type MerchantRow = Merchant & {
+  subscription?: Subscription
+  ownerEmail?: string | null
+  ownerPhone?: string | null
+  ownerName?: string | null
+}
 type CampaignRow = Campaign & { id: string }
 
 const PLAN_LABEL: Record<string, string> = { trial: 'Deneme', mini: 'Mini', standard: 'Standart', pro: 'Pro' }
@@ -303,7 +308,9 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
   onStatusChange: (status: 'active' | 'passive') => Promise<void>
   onLocationUpdate: (sector: string, city: string, district: string) => void
 }) {
-  const [ownerEmail, setOwnerEmail] = useState<string | null>(null)
+  const [ownerEmail, setOwnerEmail] = useState<string | null>(merchant.ownerEmail ?? null)
+  const [ownerPhone, setOwnerPhone] = useState<string | null>(merchant.ownerPhone ?? null)
+  const [ownerName, setOwnerName] = useState<string | null>(merchant.ownerName ?? null)
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [loadingDetail, setLoadingDetail] = useState(true)
   const [actionId, setActionId] = useState<string | null>(null)
@@ -317,7 +324,10 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
     setLoadingDetail(true)
     Promise.all([
       getDoc(doc(db, 'users', merchant.ownerId)).then((s) => {
-        setOwnerEmail(s.exists() ? (s.data() as UserProfile).email : null)
+        const owner = s.exists() ? (s.data() as UserProfile) : null
+        setOwnerEmail(owner?.email ?? null)
+        setOwnerPhone(owner?.phone ?? null)
+        setOwnerName(owner?.displayName ?? null)
       }).catch(console.error),
       getDocs(collection(db, 'merchants', merchant.id, 'campaigns')).then((s) => {
         setCampaigns(s.docs.map((d) => ({ id: d.id, ...d.data() } as CampaignRow)))
@@ -387,6 +397,12 @@ function MerchantDetailPanel({ merchant, subscription, onPlanChange, onStatusCha
             <div className="sm:col-span-2 flex items-center gap-1.5 text-gray-700">
               <span>✉️</span>
               <a href={`mailto:${ownerEmail}`} className="hover:underline truncate">{ownerEmail}</a>
+            </div>
+          )}
+          {(ownerName || ownerPhone) && (
+            <div className="sm:col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-gray-700">
+              {ownerName && <span className="truncate">👤 {ownerName}</span>}
+              {ownerPhone && <a href={`tel:${ownerPhone}`} className="hover:underline truncate">📱 {ownerPhone}</a>}
             </div>
           )}
           <div className="flex items-center gap-1.5 text-gray-600"><span>📞</span>{merchant.phone}</div>
@@ -552,15 +568,37 @@ function MerchantsTab() {
   const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
+  function digitsOnly(value?: string | null): string {
+    return (value ?? '').replace(/\D/g, '')
+  }
+
+  function phoneSearchKeys(value?: string | null): string[] {
+    const digits = digitsOnly(value)
+    if (!digits) return []
+    const withoutCountry = digits.startsWith('90') && digits.length > 10 ? digits.slice(2) : digits
+    const withoutLeadingZero = withoutCountry.startsWith('0') ? withoutCountry.slice(1) : withoutCountry
+    return [...new Set([digits, withoutCountry, withoutLeadingZero].filter(Boolean))]
+  }
+
   async function load() {
     setLoading(true); setError(null)
     try {
       const snap = await getDocs(collection(db, 'merchants'))
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MerchantRow))
-      const withSubs = await Promise.all(list.map(async (m) => {
+      const withSubs = await Promise.all(list.map(async (m): Promise<MerchantRow> => {
         try {
-          const subDoc = await getDoc(doc(db, 'merchants', m.id, 'subscription', 'current'))
-          return { ...m, subscription: subDoc.exists() ? (subDoc.data() as Subscription) : undefined }
+          const [subDoc, ownerDoc] = await Promise.all([
+            getDoc(doc(db, 'merchants', m.id, 'subscription', 'current')),
+            getDoc(doc(db, 'users', m.ownerId)),
+          ])
+          const owner = ownerDoc.exists() ? (ownerDoc.data() as UserProfile) : null
+          return {
+            ...m,
+            subscription: subDoc.exists() ? (subDoc.data() as Subscription) : undefined,
+            ownerEmail: owner?.email ?? null,
+            ownerPhone: owner?.phone ?? null,
+            ownerName: owner?.displayName ?? null,
+          }
         } catch { return m }
       }))
       setMerchants(withSubs)
@@ -605,11 +643,26 @@ function MerchantsTab() {
     } catch (err) { console.error(err); toast.error('İşlem başarısız') }
   }
 
-  const filtered = merchants.filter((m) =>
-    m.name.toLowerCase().includes(search.toLowerCase()) ||
-    m.city.toLowerCase().includes(search.toLowerCase()) ||
-    m.sector.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = merchants.filter((m) => {
+    const q = search.trim().toLocaleLowerCase('tr')
+    if (!q) return true
+    const qDigits = digitsOnly(q)
+    const qPhoneKeys = phoneSearchKeys(q)
+    const textHaystack = [
+      m.name,
+      m.city,
+      m.district,
+      m.sector,
+      m.slug,
+      m.phone,
+      m.ownerName,
+      m.ownerEmail,
+      m.ownerPhone,
+    ].filter(Boolean).join(' ').toLocaleLowerCase('tr')
+    const phoneKeys = [m.phone, m.ownerPhone].flatMap(phoneSearchKeys)
+    return textHaystack.includes(q) ||
+      (qDigits.length > 0 && qPhoneKeys.some((key) => phoneKeys.some((phone) => phone.includes(key))))
+  })
 
   if (loading) return <div className="space-y-3 animate-pulse">{[1,2,3].map((i) => <div key={i} className="h-20 bg-gray-200 rounded-xl" />)}</div>
 
@@ -628,7 +681,7 @@ function MerchantsTab() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <p className="text-sm text-gray-500">{merchants.length} işletme</p>
         <input value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Ara…" className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-56" />
+          placeholder="İşletme, sahip maili veya telefon ara…" className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-80" />
       </div>
 
       <div className="space-y-2">
@@ -655,6 +708,14 @@ function MerchantsTab() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5">{m.sector} · {m.city}</p>
+                    <div className="mt-1 flex flex-col gap-0.5 text-xs text-gray-500">
+                      {m.ownerEmail && <span className="truncate">Sahip: {m.ownerEmail}</span>}
+                      {(m.ownerPhone || m.phone) && (
+                        <span className="truncate">
+                          {m.ownerPhone ? `Sahip Tel: ${m.ownerPhone}` : `İşletme Tel: ${m.phone}`}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-col items-end gap-0.5 shrink-0">
                     {sub ? (

@@ -1,35 +1,39 @@
 import { useEffect, useState } from 'react'
-import { collection, getDocs, query, where, Timestamp, doc, getDoc } from 'firebase/firestore'
+import { collection, getDocs, getCountFromServer, query, where, Timestamp, doc, getDoc } from 'firebase/firestore'
 import { Link } from 'react-router-dom'
 import { db } from '@/firebase/firestore'
-import { useAuth } from '@/features/auth/AuthContext'
 import { useMerchantSub } from '@/contexts/MerchantSubContext'
 import { startOfMonth } from '@/lib/dates'
-import { brandStyle } from '@/lib/utils'
+import { brandStyle, onBrandClasses } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { user } = useAuth()
   const { merchant, sub, limits, loading } = useMerchantSub()
   const [customerCount, setCustomerCount] = useState<number | null>(null)
   const [monthlyTx, setMonthlyTx] = useState<number | null>(null)
   const [nearingReward, setNearingReward] = useState<number | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!merchant) return
+    setLoadError(false)
+    // Yeniden yüklemede eski değerler yerine iskelet gösterilsin
+    setCustomerCount(null); setMonthlyTx(null); setNearingReward(null)
 
-    getDocs(collection(db, 'merchants', merchant.id, 'customers'))
-      .then((snap) => setCustomerCount(snap.size))
-      .catch(console.error)
+    // Aggregate count: dokümanları indirmeden sunucuda sayar (büyük listelerde hızlı açılış)
+    getCountFromServer(collection(db, 'merchants', merchant.id, 'customers'))
+      .then((snap) => setCustomerCount(snap.data().count))
+      .catch((err) => { console.error(err); setLoadError(true) })
 
     const monthStart = startOfMonth()
-    getDocs(
+    getCountFromServer(
       query(
         collection(db, 'merchants', merchant.id, 'transactions'),
         where('createdAt', '>=', Timestamp.fromDate(monthStart)),
       )
     )
-      .then((snap) => setMonthlyTx(snap.size))
-      .catch(console.error)
+      .then((snap) => setMonthlyTx(snap.data().count))
+      .catch((err) => { console.error(err); setLoadError(true) })
 
     const campaignIds = merchant.activeCampaignIds?.length
       ? merchant.activeCampaignIds
@@ -57,11 +61,11 @@ export default function DashboardPage() {
           )
           setNearingReward(counts.reduce((a, b) => a + b, 0))
         })
-        .catch(console.error)
+        .catch((err) => { console.error(err); setLoadError(true) })
     } else {
       setNearingReward(0)
     }
-  }, [merchant])
+  }, [merchant, reloadKey])
 
   if (loading) return <LoadingSkeleton />
   if (!merchant) {
@@ -79,43 +83,58 @@ export default function DashboardPage() {
   const subscription = sub
 
   const cardStyle = brandStyle(merchant.brandColor ?? '#6366f1', merchant.brandColor2)
+  const onBrand = onBrandClasses(merchant.brandColor ?? '#6366f1', merchant.brandColor2)
 
   return (
     <div className="space-y-5">
-      {/* Mağaza kimlik kartı */}
-      <div className="rounded-2xl overflow-hidden" style={cardStyle}>
-        <div className="p-5">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-black/20 backdrop-blur-sm flex items-center justify-center shrink-0 overflow-hidden relative">
-              <span className="text-2xl font-black text-white">
-                {merchant.name[0]?.toLocaleUpperCase('tr')}
-              </span>
-              {merchant.logoUrl && (
-                <img
-                  src={merchant.logoUrl}
-                  alt={merchant.name}
-                  className="absolute inset-0 w-full h-full object-contain"
-                  onError={(e) => e.currentTarget.remove()}
-                />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-extrabold text-white leading-tight truncate">{merchant.name}</h1>
-              <p className="text-sm text-white/75 mt-0.5">{merchant.sector}</p>
-              <p className="text-xs text-white/55">{merchant.city}, {merchant.district}</p>
-            </div>
-          </div>
+      {loadError && (
+        <div className="bg-red-50 border border-red-100 rounded-xl p-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-red-700">Bazı veriler yüklenemedi.</p>
+          <button
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="text-sm font-semibold text-red-700 underline shrink-0"
+          >
+            Tekrar dene
+          </button>
+        </div>
+      )}
 
+      {/* Kompakt işletme başlığı — asıl alan günlük aksiyonlara bırakıldı */}
+      <div className="flex items-center gap-3">
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-sm" style={cardStyle}>
+          <span className={`text-lg font-black ${onBrand.text}`}>
+            {merchant.name[0]?.toLocaleUpperCase('tr')}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg font-extrabold text-gray-900 leading-tight truncate">{merchant.name}</h1>
           <a
             href={`/m/${merchant.slug}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-4 flex items-center justify-between bg-black/15 hover:bg-black/25 transition-colors rounded-xl px-3 py-2.5"
+            className="text-xs text-indigo-600 font-medium hover:underline"
           >
-            <span className="text-sm font-medium text-white">🏪 İşletme Sayfam</span>
-            <span className="text-xs text-white/60">puaniva.app/m/{merchant.slug} ↗</span>
+            🏪 İşletme Sayfam ↗
           </a>
         </div>
+      </div>
+
+      {/* Birincil aksiyonlar — esnafın günlük işi en üstte, tek dokunuş */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          to="/app/stamp"
+          className="tap-scale bg-green-600 hover:bg-green-700 text-white rounded-2xl py-5 flex flex-col items-center gap-1.5 font-bold shadow-lg shadow-green-600/20"
+        >
+          <span className="text-2xl">✅</span>
+          Damga Ekle
+        </Link>
+        <Link
+          to="/app/redeem"
+          className="tap-scale bg-purple-600 hover:bg-purple-700 text-white rounded-2xl py-5 flex flex-col items-center gap-1.5 font-bold shadow-lg shadow-purple-600/20"
+        >
+          <span className="text-2xl">🎁</span>
+          Ödül Kullandır
+        </Link>
       </div>
 
       {/* Plan uyarısı */}
@@ -141,34 +160,45 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Müşteri"
-          value={customerCount ?? '…'}
+          value={customerCount}
           sub={`/ ${limits.maxCustomers === Infinity ? '∞' : limits.maxCustomers}`}
           warn={customerCount !== null && limits.maxCustomers !== Infinity && customerCount >= limits.maxCustomers * 0.9}
         />
         <StatCard
           label="Bu Ay İşlem"
-          value={monthlyTx ?? '…'}
+          value={monthlyTx}
           sub={`/ ${limits.maxMonthlyTransactions === Infinity ? '∞' : limits.maxMonthlyTransactions}`}
           warn={monthlyTx !== null && limits.maxMonthlyTransactions !== Infinity && monthlyTx >= limits.maxMonthlyTransactions * 0.9}
         />
-        <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+        {/* Tıklanınca doğrudan ödül kullandırmaya gider */}
+        <Link
+          to="/app/redeem"
+          className="col-span-2 tap-scale bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between"
+        >
           <div>
-            <p className="text-xs text-amber-700 font-medium uppercase tracking-wide">Ödül Hakkı / Yakın</p>
-            <p className="text-2xl font-bold text-amber-800 mt-1">
-              {nearingReward ?? '…'}
-              <span className="text-sm font-normal text-amber-600 ml-1.5">müşteri</span>
-            </p>
+            <p className="text-xs text-amber-700 font-medium uppercase tracking-wide">Ödülü Hazır veya Yaklaşan</p>
+            {nearingReward === null ? (
+              <div className="h-8 w-20 bg-amber-100 rounded-lg animate-pulse mt-1" />
+            ) : (
+              <p className="text-2xl font-bold text-amber-800 mt-1">
+                {nearingReward}
+                <span className="text-sm font-normal text-amber-600 ml-1.5">müşteri</span>
+              </p>
+            )}
           </div>
-          <div className="text-3xl">🎯</div>
-        </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-3xl">🎯</span>
+            <span className="text-amber-400 text-xl font-bold">›</span>
+          </div>
+        </Link>
       </div>
 
-      {/* Hızlı erişim */}
+      {/* Hızlı erişim — birincil aksiyonlar yukarı taşındı, burada ikincil işler var */}
       <div className="grid grid-cols-2 gap-3">
-        <QuickLink to="/app/stamp" icon="✅" label="Damga Ekle" color="bg-green-50 text-green-700" />
-        <QuickLink to="/app/redeem" icon="🎁" label="Ödül Kullandır" color="bg-purple-50 text-purple-700" />
         <QuickLink to="/app/customers/new" icon="👤" label="Yeni Müşteri" color="bg-blue-50 text-blue-700" />
         <QuickLink to="/app/campaigns" icon="🎯" label="Kampanyalar" color="bg-amber-50 text-amber-700" />
+        <QuickLink to="/app/qr" icon="📱" label="QR Kod" color="bg-indigo-50 text-indigo-700" />
+        <QuickLink to="/app/analytics" icon="📊" label="Analitik" color="bg-teal-50 text-teal-700" />
       </div>
 
       {/* Aktif kampanyalar */}
@@ -189,28 +219,29 @@ export default function DashboardPage() {
         )
       })()}
 
-      <div className="text-center">
-        <p className="text-xs text-gray-400">Giriş: {user?.email}</p>
-      </div>
     </div>
   )
 }
 
-function StatCard({ label, value, sub, warn }: { label: string; value: number | string; sub: string; warn?: boolean }) {
+function StatCard({ label, value, sub, warn }: { label: string; value: number | null; sub: string; warn?: boolean }) {
   return (
-    <div className={`bg-white rounded-xl border p-4 ${warn ? 'border-amber-300' : 'border-gray-100'}`}>
+    <div className={`bg-white rounded-2xl border shadow-sm p-4 ${warn ? 'border-amber-300' : 'border-gray-100'}`}>
       <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${warn ? 'text-amber-600' : 'text-gray-900'}`}>
-        {value}
-        <span className="text-sm font-normal text-gray-400 ml-1">{sub}</span>
-      </p>
+      {value === null ? (
+        <div className="h-8 w-16 bg-gray-100 rounded-lg animate-pulse mt-1" />
+      ) : (
+        <p className={`text-2xl font-bold mt-1 ${warn ? 'text-amber-600' : 'text-gray-900'}`}>
+          {value}
+          <span className="text-sm font-normal text-gray-400 ml-1">{sub}</span>
+        </p>
+      )}
     </div>
   )
 }
 
 function QuickLink({ to, icon, label, color }: { to: string; icon: string; label: string; color: string }) {
   return (
-    <Link to={to} className={`${color} rounded-xl p-4 flex items-center gap-3 font-medium text-sm`}>
+    <Link to={to} className={`${color} tap-scale rounded-2xl p-4 flex items-center gap-3 font-semibold text-sm shadow-sm`}>
       <span className="text-xl">{icon}</span>
       {label}
     </Link>

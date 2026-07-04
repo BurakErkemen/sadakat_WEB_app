@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore'
 import { db } from '@/firebase/firestore'
+import { Link } from 'react-router-dom'
 import { useMerchant } from '@/hooks/useMerchant'
 import { formatDateTime } from '@/lib/dates'
+import ErrorState from '@/components/ErrorState'
 import type { Transaction, Customer, Campaign } from '@/types'
 
 const TX_ICON: Record<string, string> = {
@@ -39,12 +41,15 @@ export default function TransactionsPage() {
   const { merchant, loading: mLoading } = useMerchant()
   const [transactions, setTransactions] = useState<EnrichedTx[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!merchant) return
 
     async function load() {
       setLoading(true)
+      setLoadError(false)
       try {
         // Tüm verileri paralel çek
         const [txSnap, custSnap, campSnap] = await Promise.all([
@@ -78,6 +83,7 @@ export default function TransactionsPage() {
         setTransactions(enriched)
       } catch (err) {
         console.error(err)
+        setLoadError(true)
       } finally {
         setLoading(false)
       }
@@ -85,7 +91,7 @@ export default function TransactionsPage() {
 
     void load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [merchant?.id])
+  }, [merchant?.id, reloadKey])
 
   if (mLoading || loading) return (
     <div className="space-y-3 animate-pulse">
@@ -93,6 +99,8 @@ export default function TransactionsPage() {
       {[1, 2, 3, 4, 5].map((i) => <div key={i} className="h-24 bg-gray-200 rounded-xl" />)}
     </div>
   )
+
+  if (loadError) return <ErrorState onRetry={() => setReloadKey((k) => k + 1)} />
 
   return (
     <div className="space-y-4">
@@ -104,7 +112,13 @@ export default function TransactionsPage() {
       {transactions.length === 0 && (
         <div className="text-center py-12">
           <p className="text-3xl mb-2">📋</p>
-          <p className="text-gray-400">Henüz işlem yok</p>
+          <p className="text-gray-500 font-medium">İlk damga eklendiğinde işlemler burada görünecek.</p>
+          <Link
+            to="/app/stamp"
+            className="tap-scale mt-4 inline-block bg-green-600 text-white px-6 py-3 rounded-xl font-semibold text-sm hover:bg-green-700"
+          >
+            ✅ Damga Ekle
+          </Link>
         </div>
       )}
 

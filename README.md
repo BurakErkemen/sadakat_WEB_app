@@ -106,6 +106,15 @@ firebase deploy --only hosting
 
 ---
 
+## Güvenlik Notları
+
+- **`VITE_ADMIN_UIDS` gizli DEĞİLDİR.** Vite `VITE_*` değişkenlerini client bundle'a gömer; admin UID listesi build çıktısında herkes tarafından görülebilir. Bu bilinçli bir karardır: client'taki liste yalnızca UI yönlendirmesi (admin panel linki) içindir. **Gerçek yetki `firestore.rules` içindeki `isAdmin()` UID kontrolündedir**; UID'yi bilmek yetki vermez. (D-017)
+- Firebase web config değerleri (`VITE_FIREBASE_API_KEY` vb.) sır değildir; güvenlik tamamen Firestore Rules'a dayanır. Yine de `.env` commit edilmez (`.gitignore`).
+- **Admin SDK / service account anahtarı bu projede KULLANILMAZ.** Repoda bir `*adminsdk*.json` veya `*service-account*.json` görürseniz derhal silin ve anahtarı Firebase Console → Project Settings → Service Accounts üzerinden iptal edin. Böyle bir anahtar git geçmişine girdiyse **sızmış kabul edilir** ve iptal zorunludur. (D-014)
+- `publicCards.customerDisplayName` her zaman **maskeli** yazılır (`maskName`, örn. "B**** E******" — tek kelimelik isimler dahil); ayrıca Rules'taki schema allowlist sayesinde public dokümana tam ad, telefon veya not alanı **yazılamaz**. (D-013, D-021, D-022)
+
+---
+
 ## Manuel Test Senaryoları
 
 1. Owner `subscription/current` **güncelleyemez**; admin edebilir; owner okuyabilir.

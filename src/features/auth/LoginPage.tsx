@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react'
-import {
-  signInWithEmailAndPassword,
-  browserLocalPersistence,
-  browserSessionPersistence,
-  setPersistence,
-} from 'firebase/auth'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { auth } from '@/firebase/auth'
 import { useAuth } from './AuthContext'
 
 export default function LoginPage() {
@@ -31,6 +24,13 @@ export default function LoginPage() {
     e.preventDefault()
     setSubmitting(true)
     try {
+      // Firebase submit anında dinamik yüklenir; sayfa boyaması SDK'yı beklemez.
+      // AuthContext zaten arka planda yüklemeye başladığı için genelde cache'ten gelir.
+      const [
+        { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence },
+        { auth },
+      ] = await Promise.all([import('firebase/auth'), import('@/firebase/auth')])
+
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence)
       await signInWithEmailAndPassword(auth, email, password)
       // Yönlendirme yukarıdaki useEffect tarafından yapılır
@@ -46,7 +46,7 @@ export default function LoginPage() {
       {/* Anasayfaya geri butonu */}
       <Link
         to="/"
-        className="fixed top-4 left-4 flex items-center gap-1.5 text-sm text-gray-500 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm hover:text-violet-600 hover:border-violet-200 transition-colors"
+        className="fixed top-4 left-4 flex items-center gap-1.5 min-h-[44px] text-sm text-gray-500 bg-white border border-gray-200 rounded-xl px-3 shadow-sm hover:text-violet-600 hover:border-violet-200 transition-colors"
       >
         ← Anasayfa
       </Link>
@@ -70,14 +70,15 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full border border-gray-300 rounded-lg px-3 py-3 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               placeholder="ornek@isletme.com"
             />
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-sm font-medium text-gray-700">Şifre</label>
-              <Link to="/forgot-password" className="text-xs text-violet-600 hover:underline">
+              {/* py/negatif margin: görsel düzeni bozmadan 44px dokunma alanı */}
+              <Link to="/forgot-password" className="text-xs text-violet-600 hover:underline py-3.5 px-2 -my-3.5 -mx-2">
                 Şifremi Unuttum
               </Link>
             </div>
@@ -86,18 +87,18 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full border border-gray-300 rounded-lg px-3 py-3 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               placeholder="••••••••"
             />
           </div>
 
           {/* Beni Hatırla */}
-          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[44px]">
             <input
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+              className="w-6 h-6 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
             />
             <span className="text-sm text-gray-600">Beni hatırla</span>
           </label>
@@ -114,7 +115,7 @@ export default function LoginPage() {
         <div className="text-center mt-4">
           <p className="text-sm text-gray-500">
             Hesabınız yok mu?{' '}
-            <Link to="/register" className="text-violet-600 font-medium hover:underline">
+            <Link to="/register" className="inline-flex items-center min-h-[44px] px-1 text-violet-600 font-medium hover:underline">
               Kayıt Ol
             </Link>
           </p>

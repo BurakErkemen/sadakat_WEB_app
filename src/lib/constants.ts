@@ -19,7 +19,7 @@ export const PLAN_LIMITS = {
     maxCampaigns: 2,
     maxActiveCampaigns: 1,
     features: {
-      qrLookup: false,
+      qrLookup: true,
       phoneLookup: true,
       prioritySupport: false,
       advancedAnalytics: false,
@@ -32,7 +32,7 @@ export const PLAN_LIMITS = {
     maxCampaigns: 5,
     maxActiveCampaigns: Infinity,
     features: {
-      qrLookup: false,
+      qrLookup: true,
       phoneLookup: true,
       prioritySupport: true,
       advancedAnalytics: false,
@@ -45,7 +45,7 @@ export const PLAN_LIMITS = {
     maxCampaigns: Infinity,
     maxActiveCampaigns: Infinity,
     features: {
-      qrLookup: false,
+      qrLookup: true,
       phoneLookup: true,
       prioritySupport: true,
       advancedAnalytics: true,

@@ -25,6 +25,9 @@ export default function StampPage() {
   const [found, setFound] = useState<FoundData | null>(null)
   const [picker, setPicker] = useState<PickerData | null>(null)
   const [noCampaign, setNoCampaign] = useState<Customer | null>(null)
+  const [notFoundPhone, setNotFoundPhone] = useState<string | null>(null)
+  const [noMembership, setNoMembership] = useState<Customer | null>(null)
+  const [qrError, setQrError] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [stamping, setStamping] = useState(false)
   const [done, setDone] = useState(false)
@@ -48,40 +51,43 @@ export default function StampPage() {
     setShowScanner(false)
     if (!merchant) return
     setSearching(true)
+    setNotFoundPhone(null); setNoMembership(null); setQrError(null)
     try {
       const cardSnap = await getDoc(doc(db, 'publicCards', cardToken))
-      if (!cardSnap.exists()) { toast.error('Kart bulunamadı'); return }
+      if (!cardSnap.exists()) { setQrError('Kart bulunamadı. Link yanlış veya kart silinmiş olabilir.'); return }
       const { membershipId, merchantId } = cardSnap.data() as { membershipId: string; merchantId: string }
-      if (merchantId !== merchant.id) { toast.error('Bu kart sizin işletmenize ait değil'); return }
+      if (merchantId !== merchant.id) { setQrError('Bu kart sizin işletmenize ait değil.'); return }
 
       const mSnap = await getDoc(doc(db, 'merchants', merchant.id, 'memberships', membershipId))
-      if (!mSnap.exists()) { toast.error('Üyelik bulunamadı'); return }
+      if (!mSnap.exists()) { setQrError('Bu karta bağlı üyelik bulunamadı.'); return }
       const membership = { id: mSnap.id, ...mSnap.data() } as Membership
 
       const cSnap = await getDoc(doc(db, 'merchants', merchant.id, 'customers', membership.customerId))
+      if (!cSnap.exists()) { setQrError('Bu karta bağlı müşteri kaydı bulunamadı.'); return }
       const customer = { id: cSnap.id, ...cSnap.data() } as Customer
 
       await resolveFoundData(customer, membership)
-    } catch (err) { console.error(err); toast.error('QR okuma başarısız') }
+    } catch (err) { console.error(err); setQrError('QR okunamadı. Tekrar deneyin veya telefonla arayın.') }
     finally { setSearching(false) }
   }
 
   async function searchCustomer({ normalizedPhone }: { normalizedPhone: string }) {
     if (!merchant) return
     setSearching(true); setFound(null); setPicker(null); setNoCampaign(null); setDone(false)
+    setNotFoundPhone(null); setNoMembership(null); setQrError(null)
     try {
       const cSnap = await getDocs(query(
         collection(db, 'merchants', merchant.id, 'customers'),
         where('normalizedPhone', '==', normalizedPhone)
       ))
-      if (cSnap.empty) { toast.error('Müşteri bulunamadı'); return }
+      if (cSnap.empty) { setNotFoundPhone(normalizedPhone); return }
       const customer = { id: cSnap.docs[0].id, ...cSnap.docs[0].data() } as Customer
 
       const mSnap = await getDocs(query(
         collection(db, 'merchants', merchant.id, 'memberships'),
         where('customerId', '==', customer.id), where('status', '==', 'active')
       ))
-      if (mSnap.empty) { toast.error('Bu müşterinin aktif üyeliği yok'); return }
+      if (mSnap.empty) { setNoMembership(customer); return }
       const memberships = mSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Membership))
 
       // Kampanyaları çek — silinmiş olanları filtrele
@@ -143,7 +149,10 @@ export default function StampPage() {
     finally { setStamping(false) }
   }
 
-  function reset() { setPhone(''); setNote(''); setPurchaseAmount(''); setFound(null); setPicker(null); setNoCampaign(null); setDone(false) }
+  function reset() {
+    setPhone(''); setNote(''); setPurchaseAmount(''); setFound(null); setPicker(null)
+    setNoCampaign(null); setNotFoundPhone(null); setNoMembership(null); setQrError(null); setDone(false)
+  }
 
   const isPoints = found?.campaign.type === 'points'
   const earnedAmount = found ? (isPoints ? calcPoints(found.campaign) : 1) : 0
@@ -160,33 +169,99 @@ export default function StampPage() {
       <h1 className="text-xl font-bold text-gray-900">Damga / Puan Ekle</h1>
 
       {/* Arama yöntemleri */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className={`rounded-xl border-2 p-3 transition-colors ${!found ? 'bg-white border-indigo-200' : 'bg-white border-gray-100'}`}>
-          <form onSubmit={findByPhone} className="space-y-2">
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Telefon ile Ara</label>
-            <input
-              type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="0532 000 00 00"
-            />
-            <button type="submit" disabled={searching}
-              className="w-full bg-gray-900 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-              {searching ? 'Aranıyor…' : 'Ara'}
-            </button>
-          </form>
+      <div className="bg-white rounded-2xl border-2 border-indigo-100 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Hızlı müşteri bul</p>
+            <p className="text-sm text-gray-500">Telefon yazın veya kart QR'ını okutun.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => features.qrLookup ? setShowScanner(true) : undefined}
+            disabled={!features.qrLookup}
+            aria-label={features.qrLookup ? 'QR tara' : 'QR tarama bu planda pasif'}
+            className={`tap-scale min-h-12 rounded-xl px-4 text-sm font-semibold shrink-0 border transition-colors ${
+              features.qrLookup
+                ? 'bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100'
+                : 'bg-gray-50 border-gray-100 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {features.qrLookup ? 'QR Tara' : 'QR Kilitli'}
+          </button>
         </div>
-        <button
-          onClick={() => features.qrLookup ? setShowScanner(true) : undefined}
-          disabled={!features.qrLookup}
-          className={`rounded-xl border-2 p-3 flex flex-col items-center justify-center gap-2 transition-colors ${features.qrLookup ? 'bg-white border-gray-100 hover:border-indigo-200 cursor-pointer' : 'bg-gray-50 border-gray-100 opacity-60 cursor-not-allowed'}`}
-        >
-          <span className="text-3xl">{features.qrLookup ? '📷' : '🔒'}</span>
-          <span className="text-sm font-medium text-gray-700">QR Tara</span>
-          <span className="text-xs text-gray-400 text-center">
-            {features.qrLookup ? 'Müşterinin kartını tara' : 'Standart planında aktif'}
-          </span>
-        </button>
+        <form onSubmit={findByPhone} className="flex gap-2">
+          <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            enterKeyHint="search"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            autoFocus
+            className="min-h-12 flex-1 border border-gray-300 rounded-xl px-3 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="0532 000 00 00"
+          />
+          <button type="submit" disabled={searching}
+            className="tap-scale min-h-12 bg-gray-900 text-white px-5 rounded-xl text-sm font-semibold disabled:opacity-50">
+            {searching ? 'Aranıyor…' : 'Ara'}
+          </button>
+        </form>
       </div>
+
+      {/* QR hatası — kalıcı inline durum */}
+      {qrError && !found && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-center space-y-3">
+          <p className="text-3xl">📵</p>
+          <p className="text-sm font-semibold text-red-800">{qrError}</p>
+          <button
+            onClick={() => { setQrError(null); setShowScanner(true) }}
+            className="tap-scale w-full bg-red-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+          >
+            📷 Tekrar Tara
+          </button>
+        </div>
+      )}
+
+      {/* Müşteri bulunamadı — kalıcı inline durum + tek dokunuşla çözüm */}
+      {notFoundPhone && !found && (
+        <div className="bg-white border-2 border-gray-100 rounded-2xl p-5 text-center space-y-3">
+          <p className="text-3xl">🔍</p>
+          <div>
+            <p className="font-bold text-gray-900">Müşteri bulunamadı</p>
+            <p className="text-sm text-gray-500 mt-1">
+              <span className="font-medium">{formatPhone(notFoundPhone)}</span> numarasıyla kayıtlı müşteri yok.
+            </p>
+          </div>
+          <Link
+            to="/app/customers/new"
+            state={{ phone: formatPhone(notFoundPhone) }}
+            className="tap-scale block w-full bg-indigo-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            👤 Yeni Müşteri Ekle
+          </Link>
+        </div>
+      )}
+
+      {/* Aktif üyeliği olmayan müşteri */}
+      {noMembership && !found && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-900">{noMembership.fullName}</p>
+              <p className="text-sm text-amber-700 mt-1">
+                Bu müşterinin aktif kampanya üyeliği yok. Müşteri detayından bir kampanyaya ekleyin.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/app/customers/${noMembership.id}`}
+            className="tap-scale block w-full bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold text-center hover:bg-amber-700 transition-colors"
+          >
+            Müşteri Detayına Git →
+          </Link>
+        </div>
+      )}
 
       {/* Kampanya seçici (birden fazla aktif kampanya varsa) */}
       {picker && (
@@ -317,7 +392,40 @@ export default function StampPage() {
           <p className="text-sm text-gray-600">{found.customer.fullName}</p>
           <p className="text-lg font-bold">{newTotal} / {found.campaign.requiredStamps} {isPoints ? 'puan' : 'damga'}</p>
           {willReward && <p className="font-semibold text-green-700">🎁 Ödül hakkı kazandı!</p>}
-          <button onClick={reset} className="w-full bg-white border border-gray-200 text-gray-700 py-3 rounded-xl font-semibold text-sm mt-2">
+
+          {willReward && (
+            <Link
+              to="/app/redeem"
+              state={{ searchPhone: found.customer.phone }}
+              className="tap-scale block w-full bg-purple-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-purple-700"
+            >
+              Ödülü Şimdi Kullandır
+            </Link>
+          )}
+
+          {/* Sonraki işlem seçenekleri — kasiyer akışı kesintisiz devam eder */}
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <button
+              onClick={() => {
+                // Yerel sayacı güncelle, aynı müşteriyle forma geri dön
+                setFound((prev) => prev
+                  ? { ...prev, membership: { ...prev.membership, currentStamps: prev.membership.currentStamps + earnedAmount } }
+                  : prev)
+                setNote(''); setPurchaseAmount(''); setDone(false)
+              }}
+              className="tap-scale bg-green-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-green-700"
+            >
+              ➕ Aynı Müşteriye Tekrar
+            </button>
+            <Link
+              to="/app/qr"
+              state={{ cardToken: found.membership.cardToken }}
+              className="tap-scale bg-indigo-50 text-indigo-700 py-3 rounded-xl font-semibold text-sm flex items-center justify-center hover:bg-indigo-100"
+            >
+              📱 Kart Linkini Göster
+            </Link>
+          </div>
+          <button onClick={reset} className="w-full bg-white border border-gray-200 text-gray-700 py-3 rounded-xl font-semibold text-sm">
             Yeni İşlem
           </button>
         </div>

@@ -50,7 +50,7 @@ export async function createCustomerWithCard(p: {
     cardToken,
     currentStamps: 0,
     status: 'active',
-    customerDisplayName: maskName(p.fullName),
+    customerDisplayName: maskName(p.fullName), // public dokümanda tam ad tutulmaz
     lastUpdatedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
   })
@@ -88,7 +88,7 @@ export async function enrollCustomerInCampaign(p: {
     cardToken,
     currentStamps: 0,
     status: 'active',
-    customerDisplayName: p.customerDisplayName,
+    customerDisplayName: maskName(p.customerDisplayName), // public dokümanda tam ad tutulmaz
     lastUpdatedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
   })
