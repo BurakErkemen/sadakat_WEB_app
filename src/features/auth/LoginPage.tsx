@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuth } from './AuthContext'
+import ErrorState from '@/components/ErrorState'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -16,6 +17,7 @@ export default function LoginPage() {
     if (loading) return
     if (!user) return
     if (isAdmin) { navigate('/yonetim', { replace: true }); return }
+    if (!profile) return
     if (profile?.merchantId) { navigate('/app', { replace: true }); return }
     navigate('/onboarding', { replace: true })
   }, [user, isAdmin, profile, loading, navigate])
@@ -39,6 +41,10 @@ export default function LoginPage() {
       console.error(err)
       setSubmitting(false)
     }
+  }
+
+  if (!loading && user && !isAdmin && !profile) {
+    return <ErrorState message="Hesap profiliniz bulunamadı. Sorun devam ederse destek ile iletişime geçin." onRetry={() => window.location.reload()} />
   }
 
   return (

@@ -101,6 +101,10 @@
 **Karar:** Müşteri silme tek `writeBatch` ile yapılır: customer dokümanı + müşterinin tüm membership'leri + bunlara bağlı publicCards dokümanları birlikte silinir. `transactions` bilinçli olarak silinmez (immutable audit; Rules zaten delete'i yasaklar).  
 **Neden:** Codex review blocking bulgusu: önceki kod yalnızca customer dokümanını siliyordu; memberships ve publicCards orphan kalıyor, public kart tutarsız yaşamaya devam ediyordu. SPEC §0: çok-doküman yazımları atomik olmalı. Hard delete tercih edildi (KVKK: silme talebinde PII'nin gerçekten silinmesi gerekir; soft-delete PII'yi tutmaya devam ederdi).
 
+## D-025: Girişte profil ve mağaza okuma hataları onboarding sayılmaz
+**Karar:** Her oturum değişiminde profil sıfırlanır ve yüklenmesi beklenir; eski oturumun geç gelen sonuçları yok sayılır. Profil okuma hatası ve sunucuda bulunamayan profil yeni mağaza yönlendirmesi üretmez. Önbellekte mağaza bağlantısı olmayan profil sunucu doğrulamasını bekler. Mevcut mağaza sorgusu başarısızsa veya yalnızca önbellekten yanıtlandıysa form yerine tekrar deneme gösterilir. Mevcut mağaza bulununca yalnızca bağlantıyı kurtarma seçeneği sunulur.
+**Neden:** Eksik veya okunamayan veri, mağazanın bulunmadığına kanıt değildir. Ayrıca mevcut Rules dolu merchantId değerinin başka mağazayla değiştirilmesine izin vermez; kurtarma ekranından ikinci mağaza açmak desteklenen bir akış değildir. Yetkilendirme kuralları değiştirilmedi.
+
 ## D-024: Owner trial create kuralı sıkılaştırıldı
 **Karar:** Owner'ın `subscription` altına create yetkisi artık yalnızca `docId == 'current'`, alan allowlist'i (`plan, status, billingCycle, currentPeriodStart, currentPeriodEnd, createdAt, updatedAt`) ve `currentPeriodEnd <= now + 15 gün` sınırı ile geçerli. Update/delete değişmedi (sadece admin).  
 **Neden:** Codex review bulgusu: eski kural owner'ın keyfi docId altında, ekstra alanlarla ve sınırsız süreli trial dokümanı oluşturmasına izin veriyordu. D-009'daki onboarding istisnası korunarak daraltıldı.

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useAuth } from '@/features/auth/AuthContext'
 import { toSlug, isValidSlug } from '@/lib/slug'
+import ErrorState from '@/components/ErrorState'
 
 const TRIAL_DAYS = 14
 
@@ -24,11 +25,22 @@ export default function OnboardingPage() {
   // Mevcut işletme kurtarma: kullanıcının daha önce oluşturduğu mağaza varsa tekrar bağla
   const [existingMerchant, setExistingMerchant] = useState<{ id: string; name: string } | null>(null)
   const [checkingExisting, setCheckingExisting] = useState(true)
+  const [checkError, setCheckError] = useState(false)
+  const [checkAttempt, setCheckAttempt] = useState(0)
 
   useEffect(() => {
     if (!user) return
+    let cancelled = false
+    setCheckingExisting(true)
+    setCheckError(false)
+    setExistingMerchant(null)
     getDocs(query(collection(db, 'merchants'), where('ownerId', '==', user.uid)))
       .then((snap) => {
+        if (cancelled) return
+        if (snap.metadata.fromCache) {
+          setCheckError(true)
+          return
+        }
         if (snap.empty) return
         const sorted = snap.docs.sort((a, b) => {
           const aT = (a.data().createdAt as { toMillis(): number } | null)?.toMillis() ?? 0
@@ -38,9 +50,10 @@ export default function OnboardingPage() {
         const m = sorted[0]
         setExistingMerchant({ id: m.id, name: m.data().name as string })
       })
-      .catch(console.error)
-      .finally(() => setCheckingExisting(false))
-  }, [user])
+      .catch(() => { if (!cancelled) setCheckError(true) })
+      .finally(() => { if (!cancelled) setCheckingExisting(false) })
+    return () => { cancelled = true }
+  }, [user, checkAttempt])
 
   async function handleRecover() {
     if (!user || !existingMerchant) return
@@ -65,7 +78,7 @@ export default function OnboardingPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!user) return
+    if (!user || checkingExisting || checkError || existingMerchant) return
     if (!isValidSlug(slug)) {
       toast.error('İşletme linki geçersiz. Sadece küçük harf, rakam ve tire kullanın.')
       return
@@ -146,6 +159,13 @@ export default function OnboardingPage() {
     )
   }
 
+  if (checkError) {
+    return <ErrorState message="Mevcut işletmeniz kontrol edilemedi. Lütfen tekrar deneyin." onRetry={() => {
+      setCheckingExisting(true)
+      setCheckAttempt((value) => value + 1)
+    }} />
+  }
+
   if (existingMerchant) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -167,12 +187,6 @@ export default function OnboardingPage() {
               className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white py-3 rounded-xl font-semibold text-sm hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 transition-all shadow-sm"
             >
               {loading ? 'Bağlanıyor…' : 'Panelime Git'}
-            </button>
-            <button
-              onClick={() => setExistingMerchant(null)}
-              className="text-sm text-gray-400 hover:text-gray-600"
-            >
-              Yeni işletme oluştur
             </button>
           </div>
         </div>
