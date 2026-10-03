@@ -6,6 +6,7 @@ import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
 import { formatDateTime } from '@/lib/dates'
 import type { SupportTicket } from '@/types'
+import { markRepliesSeen } from '@/lib/browserPreferences'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Açık',
@@ -31,7 +32,6 @@ export default function SupportPage() {
   useEffect(() => {
     if (!merchant) return
     setLoading(true)
-    const storageKey = `sadex_seen_replies_${merchant.id}`
     const unsub = onSnapshot(
       query(collection(db, 'supportTickets'), where('merchantId', '==', merchant.id), orderBy('createdAt', 'desc')),
       (snap) => {
@@ -41,10 +41,7 @@ export default function SupportPage() {
         // Yanıtlı biletleri "görüldü" olarak işaretle
         const repliedIds = loaded.filter((t) => t.adminReply).map((t) => t.id)
         if (repliedIds.length > 0) {
-          try {
-            const existing: string[] = JSON.parse(localStorage.getItem(storageKey) ?? '[]')
-            localStorage.setItem(storageKey, JSON.stringify([...new Set([...existing, ...repliedIds])]))
-          } catch { /* ignore */ }
+          markRepliesSeen(merchant.id, repliedIds)
           window.dispatchEvent(new CustomEvent('support-replies-seen'))
         }
       },

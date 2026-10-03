@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import { setRememberSession } from '@/lib/sessionPolicy'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -27,7 +28,7 @@ export default function RegisterPage() {
     try {
       // Firebase submit anında dinamik yüklenir; form boyaması SDK'yı beklemez (mobil LCP)
       const [
-        { createUserWithEmailAndPassword, updateProfile, sendEmailVerification },
+        { createUserWithEmailAndPassword, updateProfile, sendEmailVerification, setPersistence, browserSessionPersistence },
         { doc, setDoc, serverTimestamp },
         { auth },
         { db },
@@ -38,6 +39,8 @@ export default function RegisterPage() {
         import('@/firebase/firestore'),
       ])
 
+      await setPersistence(auth, browserSessionPersistence)
+      setRememberSession(false)
       const cred = await createUserWithEmailAndPassword(auth, email, password)
       await updateProfile(cred.user, { displayName })
       const consentDate = serverTimestamp()

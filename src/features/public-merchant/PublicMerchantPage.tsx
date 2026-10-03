@@ -50,7 +50,7 @@ export default function PublicMerchantPage() {
         if (!isActive) { setState('inactive'); return }
 
         const mSnap = await getDoc(doc(db, 'merchants', merchantId))
-        if (!mSnap.exists() || mSnap.data()['status'] !== 'active') { setState('inactive'); return }
+        if (!mSnap.exists() || mSnap.data()['status'] !== 'active' || mSnap.data()['archived'] === true) { setState('inactive'); return }
         const m = { id: mSnap.id, ...mSnap.data() } as Merchant
         setMerchant(m)
 

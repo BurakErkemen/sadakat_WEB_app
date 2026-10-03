@@ -42,12 +42,13 @@ export default function OnboardingPage() {
           return
         }
         if (snap.empty) return
-        const sorted = snap.docs.sort((a, b) => {
+        const sorted = snap.docs.filter((item) => item.data().archived !== true).sort((a, b) => {
           const aT = (a.data().createdAt as { toMillis(): number } | null)?.toMillis() ?? 0
           const bT = (b.data().createdAt as { toMillis(): number } | null)?.toMillis() ?? 0
           return bT - aT
         })
         const m = sorted[0]
+        if (!m) return
         setExistingMerchant({ id: m.id, name: m.data().name as string })
       })
       .catch(() => { if (!cancelled) setCheckError(true) })

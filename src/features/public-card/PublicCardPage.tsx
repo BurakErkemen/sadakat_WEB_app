@@ -32,7 +32,8 @@ export default function PublicCardPage() {
 
         // 2. merchants/{merchantId} get
         const mSnap = await getDoc(doc(db, 'merchants', cardData.merchantId))
-        if (mSnap.exists()) setMerchant({ id: mSnap.id, ...mSnap.data() } as Merchant)
+        if (!mSnap.exists() || mSnap.data()['status'] !== 'active' || mSnap.data()['archived'] === true) { setState('passive'); return }
+        setMerchant({ id: mSnap.id, ...mSnap.data() } as Merchant)
 
         // 3. campaigns/{campaignId} get
         const cSnap = await getDoc(doc(db, 'merchants', cardData.merchantId, 'campaigns', cardData.campaignId))

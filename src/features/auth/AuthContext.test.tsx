@@ -65,6 +65,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('giriş ve mağaza yükleme', () => {
+  it('silme bekleyen hesabı mağaza sorgusu yapmadan kapalı hesap ekranına alır', async () => {
+    mount()
+    await login()
+    profile('shop', false, true, 'deletion_requested')
+    expect(screen.getByText('Hesabınız kapatıldı')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Çıkış Yap' })).toBeEnabled()
+    expect(mocks.getDocs).not.toHaveBeenCalled()
+    expect(screen.queryByText('İşletme paneli')).not.toBeInTheDocument()
+  })
+
+  it('açık oturum silme durumuna geçtiğinde paneli kapatır', async () => {
+    mount()
+    await login()
+    profile('shop')
+    expect(await screen.findByText('İşletme paneli')).toBeInTheDocument()
+    profile('shop', false, true, 'deletion_requested')
+    expect(screen.getByText('Hesabınız kapatıldı')).toBeInTheDocument()
+    expect(screen.queryByText('İşletme paneli')).not.toBeInTheDocument()
+  })
+
   it('geciken profili bekler ve mevcut mağazaya gider', async () => {
     mount()
     await login()

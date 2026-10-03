@@ -9,6 +9,7 @@ import { useAuth } from '@/features/auth/AuthContext'
 import { useInactivityLogout } from '@/hooks/useInactivityLogout'
 import { MerchantSubProvider, useMerchantSub } from '@/contexts/MerchantSubContext'
 import { trapTabKey } from '@/lib/focusTrap'
+import { readSeenReplies } from '@/lib/browserPreferences'
 
 const PRIMARY_NAV = [
   { to: '/app', label: 'Ana Sayfa', icon: '🏠', end: true },
@@ -75,10 +76,8 @@ function AppLayoutInner() {
     if (!mid) { setSupportUnread(0); return }
     isFirstSupportLoad.current = true
     notifiedIds.current = new Set()
-    const storageKey = `sadex_seen_replies_${mid}`
     function getSeenIds() {
-      try { return new Set<string>(JSON.parse(localStorage.getItem(storageKey) ?? '[]')) }
-      catch { return new Set<string>() }
+      return new Set(readSeenReplies(mid!))
     }
     const unsub = onSnapshot(
       query(collection(db, 'supportTickets'), where('merchantId', '==', mid)),

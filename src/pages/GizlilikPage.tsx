@@ -56,9 +56,12 @@ export default function GizlilikPage() {
           <section>
             <h2 className="font-semibold text-gray-900 text-base mb-2">3. Çerezler ve Takip</h2>
             <p>
-              Platform, oturum yönetimi amacıyla yalnızca zorunlu çerezler kullanmaktadır.
-              Üçüncü taraf analitik veya reklam çerezleri kullanılmamaktadır.
-              Firebase Authentication oturum bilgisini tarayıcı yerel depolamasında (localStorage) saklayabilir.
+              Firebase Authentication giriş oturumunu tarayıcı depolamasında saklar; şifreniz uygulama tarafından saklanmaz.
+              “Beni hatırla” seçilmezse oturum sekmeyle sınırlıdır ve bir saat hareketsizlikte sona erer.
+              Seçilirse oturum cihazda hatırlanır; 30 gün hareketsizlikte sona erer.
+              Güvenlik için son etkinlik zamanı ve depolama tercihiniz kaydedilir.
+              İsteğe bağlı olarak okunan destek yanıtlarının kimlikleri cihazda saklanır; “Yalnızca Zorunlu” seçilince bu kayıtlar kaldırılır.
+              Tercihlerinizi “Çerez Tercihleri” düğmesinden değiştirebilirsiniz. Reklam veya ziyaretçi takip çerezi kullanılmaz.
             </p>
           </section>
 

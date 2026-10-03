@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import { db } from '@/firebase/firestore'
 import { useMerchant } from '@/hooks/useMerchant'
 import { brandStyle } from '@/lib/utils'
+import { useAuth } from '@/features/auth/AuthContext'
+import { deleteMerchant } from './deleteMerchant'
 
 function toInstagramUrl(val: string): string {
   if (!val) return ''
@@ -15,6 +17,7 @@ function toInstagramUrl(val: string): string {
 
 export default function SettingsPage() {
   const { merchant } = useMerchant()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -28,6 +31,22 @@ export default function SettingsPage() {
   const [city, setCity] = useState('')
   const [district, setDistrict] = useState('')
   const [loading, setLoading] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteName, setDeleteName] = useState('')
+  const [showDelete, setShowDelete] = useState(false)
+
+  async function handleDelete() {
+    if (!merchant || !user || deleting || deleteName !== merchant.name) return
+    setDeleting(true)
+    try {
+      await deleteMerchant(merchant.id, user.uid)
+      toast.success('Mağazanız silindi ve geçmişi arşivlendi.')
+      navigate('/onboarding', { replace: true })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Mağaza silinemedi. Tekrar deneyin.')
+      setDeleting(false)
+    }
+  }
 
   useEffect(() => {
     if (!merchant) return
@@ -202,6 +221,16 @@ export default function SettingsPage() {
           {loading ? 'Kaydediliyor…' : 'Kaydet'}
         </button>
       </form>
+      <section className="bg-white rounded-2xl border border-red-200 p-5 space-y-3">
+        <h2 className="font-semibold text-red-700">Mağazayı Sil</h2>
+        <p className="text-sm text-gray-600">Mağaza panelinizden kaldırılır; kartlar ve işletme sayfası kapanır. Hesabınız korunur ve yeni mağaza açabilirsiniz. Müşteri ve işlem geçmişi arşivde tutulur; bu işlem verileri kalıcı olarak silmez. Silinen mağazayı kendiniz yeniden açamazsınız.</p>
+        {showDelete ? <>
+          <label className="block text-sm" htmlFor="delete-merchant-name">Onaylamak için mağaza adını yazın: <strong>{merchant.name}</strong></label>
+          <input id="delete-merchant-name" value={deleteName} onChange={(e) => setDeleteName(e.target.value)} disabled={deleting} className="w-full border rounded-lg p-3" autoComplete="off" />
+          <button onClick={() => void handleDelete()} disabled={deleting || deleteName !== merchant.name} className="w-full bg-red-600 text-white rounded-xl py-3 disabled:opacity-50">{deleting ? 'Siliniyor…' : 'Mağazayı Sil ve Arşivle'}</button>
+          <button disabled={deleting} onClick={() => { setShowDelete(false); setDeleteName('') }} className="w-full py-2 text-sm">Vazgeç</button>
+        </> : <button onClick={() => setShowDelete(true)} className="w-full border border-red-300 text-red-600 rounded-xl py-3">Mağazayı Sil</button>}
+      </section>
     </div>
   )
 }

@@ -11,6 +11,7 @@ import AdminMerchantReport from './AdminMerchantReport'
 import AdminAuditTab from './AdminAuditTab'
 import AdminFinanceTab from './AdminFinanceTab'
 import { recordAdminAction } from './adminAudit'
+import { requestAccountDeletion } from './accountDeletion'
 
 type Tab = 'merchants' | 'pricing' | 'support' | 'users' | 'finance' | 'audit'
 
@@ -162,13 +163,12 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
   }
 
   async function deleteUser(u: UserRow) {
-    if (!confirm(`"${u.displayName}" kullanıcısını silmek istediğinize emin misiniz?\nBu işlem geri alınamaz.`)) return
+    if (!confirm(`"${u.displayName || u.email}" hesabının erişimi kapatılacak ve işletmeleri pasife alınacak.\nAuth hesabını kalıcı silmek için ardından Firebase Console → Authentication bölümündeki kaydı silmelisiniz. Devam edilsin mi?`)) return
     setDeletingId(u.id)
     try {
-      await deleteDoc(doc(db, 'users', u.id))
-      await recordAdminAction({ action: 'user.deleted', targetType: 'user', targetId: u.id, merchantId: u.merchantId, summary: `${u.displayName || u.email} kullanıcısı silindi` })
-      toast.success('Kullanıcı silindi')
-      setUsers((prev) => prev.filter((x) => x.id !== u.id))
+      await requestAccountDeletion(u.id)
+      toast.success('Erişim kapatıldı. Auth silme adımını tamamlayın.')
+      setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, status: 'deletion_requested' } : x))
     } catch (err) { console.error(err); toast.error('Silinemedi') }
     finally { setDeletingId(null) }
   }
@@ -192,7 +192,7 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
       <div className="space-y-2">
         {filtered.map((u) => {
           const sub = u.subscription
-          const msLeft = sub ? sub.currentPeriodEnd.toDate().getTime() - Date.now() : null
+          const msLeft = sub?.currentPeriodEnd ? sub.currentPeriodEnd.toDate().getTime() - Date.now() : null
           const daysLeft = msLeft !== null ? Math.ceil(msLeft / 86_400_000) : null
           const isExpired = msLeft !== null && msLeft <= 0
           const isNew = (u.createdAt?.toMillis?.() ?? 0) > Date.now() - 7 * 24 * 3600 * 1000
@@ -213,10 +213,11 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
 
                 <div className="flex flex-row flex-wrap sm:flex-col sm:items-end gap-1 shrink-0">
                   <button
-                    disabled={deletingId === u.id}
+                    disabled={deletingId === u.id || u.status === 'deletion_requested'}
                     onClick={() => void deleteUser(u)}
                     className="text-xs text-red-400 hover:text-red-600 disabled:opacity-40 px-1.5 py-0.5 rounded hover:bg-red-50 transition-colors"
-                    title="Kullanıcıyı sil"
+                    title="Hesap silme işlemini başlat"
+                    aria-label="Hesap silme işlemini başlat"
                   >
                     {deletingId === u.id ? '…' : '🗑'}
                   </button>
@@ -226,8 +227,15 @@ function UsersTab({ onCountChange }: { onCountChange: (n: number) => void }) {
                     u.status === 'rejected' ? 'bg-red-100 text-red-600' :
                     'bg-amber-100 text-amber-700'
                   }`}>
-                    {u.status === 'approved' ? 'Aktif' : u.status === 'rejected' ? 'Reddedildi' : 'Bekliyor'}
+                    {u.status === 'deletion_requested' ? 'Erişim kapalı · Auth silme kontrolü gerekli' : u.status === 'approved' ? 'Aktif' : u.status === 'rejected' ? 'Reddedildi' : 'Bekliyor'}
                   </span>
+                  {u.status === 'deletion_requested' && (
+                    <div className="max-w-xs space-y-1 text-xs text-gray-600">
+                      <p>Authentication kullanıcı listesinden bu UID'yi kontrol edip silin. Auth kaydı otomatik silinmez.</p>
+                      <p className="font-mono break-all select-all">{u.id}</p>
+                      <a href={`https://console.firebase.google.com/project/${encodeURIComponent(import.meta.env.VITE_FIREBASE_PROJECT_ID)}/authentication/users`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">Firebase Authentication'ı Aç</a>
+                    </div>
+                  )}
                   {/* Onay / Red butonları */}
                   {u.status === 'pending' && (
                     <>

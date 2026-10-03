@@ -4,13 +4,14 @@ export interface UserProfile {
   displayName: string
   email: string
   phone?: string
-  merchantId?: string
-  status?: 'pending' | 'approved' | 'rejected'
+  merchantId?: string | null
+  status?: 'pending' | 'approved' | 'rejected' | 'deletion_requested'
   createdAt: Timestamp
   updatedAt: Timestamp
 }
 
 export interface Merchant {
+  archived?: boolean
   id: string
   name: string
   slug: string

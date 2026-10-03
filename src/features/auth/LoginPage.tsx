@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useAuth } from './AuthContext'
-import ErrorState from '@/components/ErrorState'
+import AccountUnavailable from './AccountUnavailable'
+import { setRememberSession } from '@/lib/sessionPolicy'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const { user, isAdmin, profile, loading } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(true)
+  const [rememberMe, setRememberMe] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   // Zaten giriş yapmışsa doğru yere yönlendir
@@ -34,6 +35,7 @@ export default function LoginPage() {
       ] = await Promise.all([import('firebase/auth'), import('@/firebase/auth')])
 
       await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence)
+      setRememberSession(rememberMe)
       await signInWithEmailAndPassword(auth, email, password)
       // Yönlendirme yukarıdaki useEffect tarafından yapılır
     } catch (err: unknown) {
@@ -44,7 +46,7 @@ export default function LoginPage() {
   }
 
   if (!loading && user && !isAdmin && !profile) {
-    return <ErrorState message="Hesap profiliniz bulunamadı. Sorun devam ederse destek ile iletişime geçin." onRetry={() => window.location.reload()} />
+    return <AccountUnavailable user={user} />
   }
 
   return (
@@ -108,6 +110,10 @@ export default function LoginPage() {
             />
             <span className="text-sm text-gray-600">Beni hatırla</span>
           </label>
+
+          <p className="text-xs text-gray-500">{rememberMe
+            ? 'Bu cihazda oturumunuz hatırlanır. 30 gün kullanılmazsa çıkış yapılır.'
+            : 'Sekme kapandığında veya 1 saat işlem yapılmadığında oturum sona erer.'}</p>
 
           <button
             type="submit"

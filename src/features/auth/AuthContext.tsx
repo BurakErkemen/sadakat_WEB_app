@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth'
 import { ADMIN_UIDS } from '@/lib/constants'
 import type { UserProfile } from '@/types'
 import ErrorState from '@/components/ErrorState'
+import AccountUnavailable from './AccountUnavailable'
 
 interface AuthContextValue {
   user: User | null
@@ -87,7 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError(null)
         setLoading(true)
         setAttempt((value) => value + 1)
-      }} /> : children}
+      }} /> : !loading && user && !isAdmin && profile?.status === 'deletion_requested'
+        ? <AccountUnavailable user={user} deletionRequested /> : children}
     </AuthContext.Provider>
   )
 }

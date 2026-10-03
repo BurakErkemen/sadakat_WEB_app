@@ -1,5 +1,14 @@
 # DECISIONS.md
 
+## D-027: Owner mağaza silme, oturum kalıcılığı ve tarayıcı tercihleri
+**Mağaza:** Silme arşivleme olarak uygulanır; UI geçmiş verilerin kalıcı silinmediğini açıklar ve mağaza adıyla onay ister. Tek transaction mağazayı `archived: true, status: passive` yapar, profile ait merchantId'yi null yapar ve varsa mağazaya ait slug'ı kapatır. Rules ilişkiyi yalnızca bu atomik koşulda kaldırmaya izin verir; arşivlenmiş mağaza owner tarafından yeniden açılmaz veya yeniden bağlanmaz. Kurtarma listesi arşivleri atlar. Immutable işlemler ve müşteri kayıtları admin erişimiyle arşivde korunur. Auth hesabı silinmez. Bu, kullanıcının mağza silme talebi için mevcut backend yasağı ve immutable geçmiş kuralıyla uyumlu varsayılan seçimdir.
+**Oturum:** Beni hatırla varsayılanı kapalıdır; Firebase SESSION kalıcılığı kullanılır. Açıkken LOCAL kullanılır. Merchant panelinde hareketsizlik çıkışı sırasıyla 1 saat ve 30 gündür; sayfa yenileme süreyi sıfırlamaz. Şifre saklanmaz; kalıcılık ve etkinlik bilgisi kullanıcı tarafından istenen oturumun parçasıdır, isteğe bağlı destek tercih onayından bağımsızdır. Yeni kayıt oturumu SESSION ile açılır.
+**Tercihler:** Eski banner davranışı yerine v2 kapsamlı tercih saklanır. İzinle yalnızca okunmuş destek yanıtı kimlikleri localStorage'a yazılır. Red/geri çekme bu anahtarları siler; açık sayfada işlev bellekte sürer. Oturum anahtarlarına dokunulmaz. Eski accepted/declined metni yeni kapsam için izin kabul edilmez. Reklam/ziyaretçi analitiği eklenmez. Tarayıcı depolama erişimi engelliyse arayüz çökmez ve isteğe bağlı kalıcı kayıt yapılmaz.
+
+## D-026: Admin hesap silme ve Firebase Auth sınırı
+**Karar:** Tarayıcıdan başka kullanıcının Firebase Auth kaydı silinemez; Admin SDK/backend yasağı korunur. Admin silme işlemi artık profili kaldırmak yerine `status: deletion_requested` yazar, kullanıcının mağazalarını pasife alır ve audit kaydı oluşturur; tüm yazımlar tek batch'tir. Mevcut approved-user Rules kontrolü özel verilere erişimi kapatır. Profil admin listesinde UID ve Firebase Authentication bağlantısıyla kalır; Auth kaydı Console'dan silinmelidir. Arayüz otomatik Auth silme veya tamamlanmış silme iddiasında bulunmaz.
+**Kurtarma:** Önceden profili silinmiş kullanıcılar girişte çıkış yapabilir veya açık onayla kendi Auth hesaplarını silebilir. Yakın tarihli giriş gerekiyorsa tekrar giriş istenir. Profil bulunamaması tek başına otomatik Auth silme nedeni değildir. İşletme geçmişi ve immutable işlemler bu akışta silinmez; bu akış toplu veri silme değildir.
+
 Çelişkili veya belirsiz noktalarda alınan mimari kararlar.
 
 ---

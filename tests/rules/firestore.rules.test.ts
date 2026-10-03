@@ -17,6 +17,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore'
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST
@@ -577,7 +578,76 @@ describeWithEmulator('firestore security rules', () => {
     await assertFails(updateDoc(doc(anonDb, 'users', 'user_1'), { status: 'approved' }))
   })
 
+  it('admin closes account atomically; closed owner cannot access private data or reopen it', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, 'users', 'closed_owner'), { status: 'approved', merchantId: 'closed_shop' })
+      await setDoc(doc(db, 'merchants', 'closed_shop'), { ownerId: 'closed_owner', status: 'active' })
+      await setDoc(doc(db, 'merchants', 'closed_shop', 'customers', 'customer'), { fullName: 'Test' })
+    })
+    const adminUid = 'QGdmCNKAahg6uWiUhEBt5dcGNFD3'
+    const adminDb = testEnv.authenticatedContext(adminUid).firestore()
+    const batch = writeBatch(adminDb)
+    batch.update(doc(adminDb, 'users', 'closed_owner'), { status: 'deletion_requested' })
+    batch.update(doc(adminDb, 'merchants', 'closed_shop'), { status: 'passive' })
+    batch.set(doc(adminDb, 'adminAuditLogs', 'closed'), {
+      action: 'user.deletion_requested', targetType: 'user', targetId: 'closed_owner',
+      summary: 'Closed', actorUid: adminUid, createdAt: new Date(),
+    })
+    await assertSucceeds(batch.commit())
+    const ownerDb = testEnv.authenticatedContext('closed_owner').firestore()
+    await assertSucceeds(getDoc(doc(ownerDb, 'users', 'closed_owner')))
+    await assertFails(getDoc(doc(ownerDb, 'merchants', 'closed_shop', 'customers', 'customer')))
+    await assertFails(updateDoc(doc(ownerDb, 'users', 'closed_owner'), { status: 'approved' }))
+    await assertFails(updateDoc(doc(ownerDb, 'merchants', 'closed_shop'), { status: 'active' }))
+    await assertFails(setDoc(doc(ownerDb, 'merchants', 'new_shop'), { ownerId: 'closed_owner' }))
+    await assertFails(deleteDoc(doc(ownerDb, 'users', 'closed_owner')))
+  })
+
   it('documents that rules tests require the Firestore emulator', () => {
     expect(emulatorHost).toBeTruthy()
+  })
+
+  it('owner archives their merchant atomically, cannot reopen it, and can attach a new merchant', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await setDoc(doc(db, 'users', 'owner_archive'), { status: 'approved', merchantId: 'archive_shop' })
+      await setDoc(doc(db, 'merchants', 'archive_shop'), { ownerId: 'owner_archive', status: 'active', slug: 'archive' })
+      await setDoc(doc(db, 'publicSlugs', 'archive'), { merchantId: 'archive_shop', isActive: true })
+      await setDoc(doc(db, 'merchants', 'archive_shop', 'customers', 'c'), { fullName: 'Test' })
+      await setDoc(doc(db, 'merchants', 'archive_shop', 'transactions', 't'), { amount: 1 })
+    })
+    const db = testEnv.authenticatedContext('owner_archive').firestore()
+    const userRef = doc(db, 'users', 'owner_archive')
+    const merchantRef = doc(db, 'merchants', 'archive_shop')
+    await assertFails(updateDoc(userRef, { merchantId: null }))
+    await assertFails(updateDoc(merchantRef, { archived: true, status: 'passive' }))
+    const batch = writeBatch(db)
+    batch.update(userRef, { merchantId: null })
+    batch.update(merchantRef, { archived: true, status: 'passive', deletedAt: new Date() })
+    batch.update(doc(db, 'publicSlugs', 'archive'), { isActive: false })
+    await assertSucceeds(batch.commit())
+    await assertFails(updateDoc(merchantRef, { archived: false, status: 'active' }))
+    await assertFails(updateDoc(userRef, { merchantId: 'archive_shop' }))
+    await assertFails(getDoc(doc(db, 'merchants', 'archive_shop', 'customers', 'c')))
+    await assertFails(deleteDoc(doc(db, 'merchants', 'archive_shop', 'transactions', 't')))
+    await assertSucceeds(setDoc(doc(db, 'merchants', 'new_shop'), { ownerId: 'owner_archive', status: 'active' }))
+    await assertSucceeds(updateDoc(userRef, { merchantId: 'new_shop' }))
+    const adminDb = testEnv.authenticatedContext('QGdmCNKAahg6uWiUhEBt5dcGNFD3').firestore()
+    expect((await getDoc(doc(adminDb, 'merchants', 'archive_shop', 'transactions', 't'))).exists()).toBe(true)
+  })
+
+  it('another owner cannot archive a merchant or detach its owner', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', 'victim'), { status: 'approved', merchantId: 'victim_shop' })
+      await setDoc(doc(ctx.firestore(), 'users', 'other'), { status: 'approved', merchantId: null })
+      await setDoc(doc(ctx.firestore(), 'merchants', 'victim_shop'), { ownerId: 'victim', status: 'active' })
+    })
+    const db = testEnv.authenticatedContext('other').firestore()
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'users', 'victim'), { merchantId: null })
+    batch.update(doc(db, 'merchants', 'victim_shop'), { archived: true, status: 'passive' })
+    await assertFails(batch.commit())
+    expect((await getDoc(doc(db, 'merchants', 'victim_shop'))).data()?.status).toBe('active')
   })
 })

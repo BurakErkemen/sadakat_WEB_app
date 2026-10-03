@@ -1,59 +1,45 @@
-import { useEffect, useRef } from 'react'
+﻿import { useEffect } from 'react'
 import { signOut } from 'firebase/auth'
 import { auth } from '@/firebase/auth'
+import { activityStorage, rememberSession, REMEMBERED_SESSION_MS, SHORT_SESSION_MS, SESSION_START_KEY } from '@/lib/sessionPolicy'
 
-const INACTIVITY_MS = 60 * 60 * 1000 // 1 saat
-const CHECK_INTERVAL_MS = 60 * 1000   // her 60 saniyede kontrol
-const LS_KEY = 'sadex_last_activity'
-
-// localStorage tabanlı cross-tab model:
-// Aktivite tüm sekmelerde ortak localStorage key'e yazılır.
-// Herhangi bir sekme yeterince uzun süre hareketsiz kalırsa tüm sekmelerde
-// auth.signOut() tetiklenir (Firebase Auth state sekmeler arası otomatik senkronize olur).
 export function useInactivityLogout() {
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   useEffect(() => {
-    function doLogout() {
-      signOut(auth).catch(console.error).finally(() => {
-        window.location.replace('/login')
-      })
-    }
-
-    function onActivity() {
-      localStorage.setItem(LS_KEY, String(Date.now()))
-    }
-
-    function getLastActivity(): number {
-      return Number(localStorage.getItem(LS_KEY) ?? Date.now())
-    }
-
-    function checkInactivity() {
-      if (Date.now() - getLastActivity() >= INACTIVITY_MS) {
-        doLogout()
+    const key = `sadex_last_activity_${auth.currentUser?.uid ?? 'session'}`
+    const storage = activityStorage()
+    const timeout = rememberSession() ? REMEMBERED_SESSION_MS : SHORT_SESSION_MS
+    let last = Date.now()
+    let exiting = false
+    try {
+      const stored = Number(storage?.getItem(key))
+      if (Number.isFinite(stored) && stored > 0) last = Math.max(stored, Number(storage?.getItem(SESSION_START_KEY)) || 0)
+      else storage?.setItem(key, String(last))
+    } catch { /* Bellekte devam et. */ }
+    function check() {
+      try {
+        const stored = Number(storage?.getItem(key))
+        if (Number.isFinite(stored) && stored > last) last = stored
+      } catch { /* Bellekte devam et. */ }
+      if (!exiting && Date.now() - last >= timeout) {
+        exiting = true
+        void signOut(auth).then(() => window.location.replace('/login')).catch(() => { exiting = false })
       }
     }
-
-    // Sekme öne gelince anında kontrol (arka planda 1 saat geçmişse hemen çıkış)
-    function onVisibility() {
-      if (document.visibilityState === 'visible') {
-        checkInactivity()
-      }
+    function activity() {
+      check()
+      if (exiting) return
+      last = Date.now()
+      try { storage?.setItem(key, String(last)) } catch { /* Bellekte devam et. */ }
     }
-
-    // Her mount'ta timestamp'i sıfırla — tarayıcı kapatılıp açılmasını "hareketsizlik" sayma
-    localStorage.setItem(LS_KEY, String(Date.now()))
-
-    const EVENTS = ['mousemove', 'mousedown', 'keypress', 'touchstart', 'click', 'scroll'] as const
-    EVENTS.forEach((e) => window.addEventListener(e, onActivity, { passive: true }))
-    document.addEventListener('visibilitychange', onVisibility)
-
-    intervalRef.current = setInterval(checkInactivity, CHECK_INTERVAL_MS)
-
+    check()
+    const events = ['pointerdown', 'keydown', 'touchstart', 'scroll'] as const
+    events.forEach((event) => window.addEventListener(event, activity, { passive: true }))
+    document.addEventListener('visibilitychange', check)
+    const interval = setInterval(check, 60_000)
     return () => {
-      EVENTS.forEach((e) => window.removeEventListener(e, onActivity))
-      document.removeEventListener('visibilitychange', onVisibility)
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      clearInterval(interval)
+      events.forEach((event) => window.removeEventListener(event, activity))
+      document.removeEventListener('visibilitychange', check)
     }
   }, [])
 }
